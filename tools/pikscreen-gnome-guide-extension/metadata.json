@@ -1,0 +1,7 @@
+{
+  "uuid": "pikscreen-guide@pikyusufaslan.dev",
+  "name": "PikScreen Guides",
+  "description": "Local-only recording countdown and zoom guides for PikScreen.",
+  "shell-version": ["50", "50.3"],
+  "version": 1
+}

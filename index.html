@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>PikScreen</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body data-session-state="ready">
+    <main class="app-root">
+      <div class="state-registry" aria-hidden="true">
+        <span id="session-state-label">Ready to record</span>
+        <section id="source-empty"></section>
+        <section id="source-selected" hidden><span id="selected-source-meta">Selected source</span></section>
+        <section id="recording-live" hidden></section>
+        <section id="rendering-live" hidden></section>
+      </div>
+
+      <section id="settings-popover" class="settings-shell" aria-label="PikScreen settings" hidden>
+        <header class="settings-header">
+          <div class="settings-brand">
+            <span class="brand-wordmark brand-wordmark--settings">
+              <img src="/src/assets/pikscreen-wordmark-transparent.png" alt="PikScreen" />
+            </span>
+            <span class="settings-brand-context">Recording settings</span>
+          </div>
+          <span class="autosave-state"><i class="ph ph-check-circle"></i> Saved automatically</span>
+        </header>
+
+        <div class="settings-layout">
+          <nav class="settings-nav" aria-label="Settings sections">
+            <button class="settings-nav-item active" type="button" data-settings-tab="video">
+              <i class="ph ph-video-camera"></i><span>Video</span>
+            </button>
+            <button class="settings-nav-item" type="button" data-settings-tab="appearance">
+              <i class="ph ph-sparkle"></i><span>Appearance</span>
+            </button>
+            <button class="settings-nav-item" type="button" data-settings-tab="audio">
+              <i class="ph ph-waveform"></i><span>Audio</span>
+            </button>
+            <button class="settings-nav-item" type="button" data-settings-tab="capture">
+              <i class="ph ph-crop"></i><span>Capture</span>
+            </button>
+            <button class="settings-nav-item" type="button" data-settings-tab="camera">
+              <i class="ph ph-webcam"></i><span>Camera</span>
+            </button>
+            <p class="settings-attribution">
+              Forked from <strong>Recordly</strong>.
+              <span>AGPL-3.0-or-later</span>
+            </p>
+          </nav>
+
+          <div class="settings-content">
+            <section class="settings-panel active" data-settings-panel="video">
+              <div class="settings-panel-heading">
+                <div><span class="section-kicker">RECORDING</span><h1>Video</h1><p>Choose how fluid and detailed the source capture should be.</p></div>
+              </div>
+              <div class="settings-card">
+                <div class="settings-card-heading">
+                  <div><h2>Recording profile</h2><p>These settings affect capture load and final render time.</p></div>
+                  <i class="ph ph-gauge"></i>
+                </div>
+                <div class="field-grid two-column">
+                  <label class="select-field"><span>Frame rate</span>
+                    <select id="recording-fps">
+                      <option value="60">60 FPS</option>
+                      <option value="120" selected>120 FPS</option>
+                      <option value="180">180 FPS</option>
+                    </select>
+                    <small>Higher values make pointer and zoom motion more fluid.</small>
+                  </label>
+                  <label class="select-field"><span>Quality</span>
+                    <select id="recording-quality">
+                      <option value="balanced">Balanced · CRF 20</option>
+                      <option value="high" selected>High · CRF 18</option>
+                      <option value="ultra">Ultra · CRF 16</option>
+                    </select>
+                    <small>High is the recommended profile for most recordings.</small>
+                  </label>
+                </div>
+              </div>
+              <aside class="settings-tip"><i class="ph ph-info"></i><p><strong>120 FPS and High</strong> is PikScreen's default. It keeps motion smooth without making every export unnecessarily heavy.</p></aside>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="appearance">
+              <div class="settings-panel-heading">
+                <div><span class="section-kicker">PRESENTATION</span><h1>Appearance</h1><p>Control the frame, cursor, zoom depth, and click feedback.</p></div>
+              </div>
+
+              <div class="settings-card">
+                <div class="settings-card-heading">
+                  <div><h2>Cursor</h2><p>Zoom markers continue working when the cursor is hidden.</p></div>
+                  <button id="cursor-visible" class="state-toggle" type="button" aria-pressed="true"><span>Show cursor</span><strong>On</strong></button>
+                </div>
+                <div class="range-stack">
+                  <label class="range-field"><span><b>Cursor smoothing</b><output id="cursor-smoothing-output" for="cursor-smoothing">35%</output></span>
+                    <input id="cursor-smoothing" type="range" min="0" max="100" value="35" />
+                  </label>
+                  <label class="range-field"><span><b>Cursor size</b><output id="cursor-size-output" for="cursor-size">100%</output></span>
+                    <input id="cursor-size" type="range" min="60" max="150" value="100" />
+                  </label>
+                  <label class="range-field"><span><b>Zoom amount</b><output id="zoom-scale-output" for="zoom-scale">1.8×</output></span>
+                    <input id="zoom-scale" type="range" min="120" max="240" step="5" value="180" />
+                  </label>
+                </div>
+                <div class="asset-row">
+                  <div><strong>Custom cursor</strong><small id="custom-cursor-note">Tahoe cursor set</small></div>
+                  <div class="button-row">
+                    <button id="choose-custom-cursor" class="secondary-button" type="button"><i class="ph ph-upload-simple"></i> Choose image</button>
+                    <button id="clear-custom-cursor" class="icon-button" type="button" aria-label="Reset custom cursor" title="Reset custom cursor" disabled><i class="ph ph-arrow-counter-clockwise"></i></button>
+                  </div>
+                </div>
+
+                <div id="zoom-demo" class="zoom-demo" aria-label="Cursor and zoom preview">
+                  <div class="zoom-demo-screen" aria-hidden="true">
+                    <div class="zoom-demo-topbar"><i></i><i></i><i></i><span>Preview workspace</span></div>
+                    <div class="zoom-demo-sidebar"><b></b><b></b><b></b></div>
+                    <div class="zoom-demo-content"><strong>Selected detail</strong><span></span><span></span><span></span></div>
+                    <div class="zoom-demo-target"></div>
+                    <div class="zoom-demo-viewport"><small>ZOOM FRAME</small></div>
+                    <img id="zoom-demo-cursor" class="zoom-demo-cursor" alt="" aria-hidden="true" />
+                  </div>
+                  <p>The frame shows how much of the source remains visible at the selected depth.</p>
+                </div>
+              </div>
+
+              <div class="settings-card">
+                <div class="settings-card-heading">
+                  <div><h2>Background</h2><p>Frame the recording with one of the bundled scenes.</p></div>
+                  <i class="ph ph-image"></i>
+                </div>
+                <select id="recording-background" class="visually-hidden" aria-label="Recording background">
+                  <option value="tahoeLight">Tahoe Light</option><option value="tahoeDark" selected>Tahoe Dark</option>
+                  <option value="midnight8">Midnight 8</option><option value="ipad17Dark">iPad 17 Dark</option>
+                  <option value="ipad17Light">iPad 17 Light</option><option value="sequoiaBlue">Sequoia Blue</option>
+                  <option value="sequoiaBlueOrange">Sequoia Blue Orange</option><option value="ventura">Ventura</option>
+                  <option value="sonomaClouds">Sonoma Clouds</option><option value="sonomaLight">Sonoma Light</option>
+                  <option value="sonomaDark">Sonoma Dark</option><option value="glassmorphism3">Glassmorphism 3</option>
+                  <option value="glassmorphism4">Glassmorphism 4</option><option value="energy19">Energy 19</option>
+                  <option value="wallpaper3">Wallpaper 3</option><option value="wallpaper4">Wallpaper 4</option>
+                  <option value="cityscape">Cityscape</option><option value="levels">Levels</option>
+                  <option value="wallpaper10">Wallpaper 10</option><option value="venturaDark">Ventura Dark</option>
+                  <option value="sonomaEvening">Sonoma Evening</option><option value="sonomaHorizon">Sonoma Horizon</option>
+                  <option value="iridescent9">Iridescent 9</option><option value="energy17">Energy 17</option>
+                </select>
+                <div class="wallpaper-grid" data-background-gallery="recording"></div>
+                <div class="asset-row">
+                  <div><strong>Custom background</strong><small id="custom-background-note">Using selected Tahoe background</small></div>
+                  <div class="button-row">
+                    <button id="choose-custom-background" class="secondary-button" type="button"><i class="ph ph-upload-simple"></i> Choose image</button>
+                    <button id="clear-custom-background" class="icon-button" type="button" aria-label="Reset custom background" title="Reset custom background" disabled><i class="ph ph-arrow-counter-clockwise"></i></button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-card compact-card">
+                <div class="settings-card-heading">
+                  <div><h2>Click effects</h2><p>Show warm left-click and violet right-click pulses.</p></div>
+                  <button id="click-effects-enabled" class="state-toggle" type="button" aria-pressed="true"><span>Show pulses</span><strong>On</strong></button>
+                </div>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="audio">
+              <div class="settings-panel-heading">
+                <div><span class="section-kicker">SOUND</span><h1>Audio</h1><p>Mix system output and microphone into the recording.</p></div>
+              </div>
+              <div class="settings-card audio-card">
+                <div class="audio-card-top">
+                  <span class="audio-icon"><i class="ph ph-speaker-high"></i></span>
+                  <div><h2>System audio</h2><p>Desktop, browser, and application sound.</p></div>
+                  <button id="system-audio-enabled" class="state-toggle" type="button" aria-pressed="true"><span>System audio</span><strong>On</strong></button>
+                </div>
+                <label class="range-field"><span><b>Level</b><output id="system-audio-volume-output" for="system-audio-volume">100%</output></span>
+                  <input id="system-audio-volume" type="range" min="0" max="100" value="100" />
+                </label>
+                <label class="select-field"><span>Output</span><select id="system-audio-device"></select></label>
+              </div>
+              <div class="settings-card audio-card">
+                <div class="audio-card-top">
+                  <span class="audio-icon"><i class="ph ph-microphone"></i></span>
+                  <div><h2>Microphone</h2><p>Your selected voice input.</p></div>
+                  <button id="microphone-enabled" class="state-toggle" type="button" aria-pressed="true"><span>Microphone</span><strong>On</strong></button>
+                </div>
+                <label class="range-field"><span><b>Level</b><output id="microphone-volume-output" for="microphone-volume">100%</output></span>
+                  <input id="microphone-volume" type="range" min="0" max="100" value="100" />
+                </label>
+                <label class="select-field"><span>Input</span><select id="microphone-device"></select></label>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="capture">
+              <div class="settings-panel-heading">
+                <div><span class="section-kicker">FRAMING</span><h1>Capture</h1><p>Remove desktop furniture before the final frame is composed.</p></div>
+              </div>
+              <div class="settings-card">
+                <label class="switch-row">
+                  <span class="setting-icon"><i class="ph ph-layout"></i></span>
+                  <span><strong>Hide bottom dock</strong><small>Crop the bottom desktop bar from monitor recordings.</small></span>
+                  <input id="hide-bottom-bar" type="checkbox" checked />
+                </label>
+                <div class="divider"></div>
+                <label class="range-field"><span><b>Dock height correction</b><output id="bar-height-correction-output" for="bar-height-correction">0 px</output></span>
+                  <input id="bar-height-correction" type="range" min="-120" max="160" value="0" />
+                </label>
+                <p id="window-crop-note" class="inline-note" hidden><i class="ph ph-info"></i> Window capture is already isolated, so dock cropping is unavailable.</p>
+              </div>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="camera">
+              <div class="settings-panel-heading">
+                <div><span class="section-kicker">OVERLAY</span><h1>Camera</h1><p>Add a responsive webcam bubble over the recording.</p></div>
+              </div>
+              <div class="settings-card">
+                <div class="settings-card-heading">
+                  <div><h2>Webcam bubble</h2><p>Only appears when a V4L2 camera is connected.</p></div>
+                  <button id="webcam-enabled" class="state-toggle" type="button" aria-pressed="false"><span>Webcam</span><strong>Off</strong></button>
+                </div>
+                <label class="select-field"><span>Camera</span><select id="webcam-device"></select></label>
+                <label class="switch-row simple"><span><strong>Mirror camera</strong><small>Use the familiar mirrored preview orientation.</small></span><input id="webcam-mirror" type="checkbox" checked /></label>
+                <p id="webcam-note" class="inline-note">Checking for V4L2 cameras...</p>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section id="editor-shell" class="editor-shell" aria-label="PikScreen Editor" hidden>
+        <header class="editor-topbar">
+          <div class="editor-topbar-side">
+            <button id="editor-discard" class="icon-button danger-ghost" type="button" title="Discard recording" aria-label="Discard recording"><i class="ph ph-trash"></i></button>
+            <span class="toolbar-divider"></span>
+            <button id="editor-undo" class="icon-button" type="button" title="Undo" aria-label="Undo" disabled><i class="ph ph-arrow-u-up-left"></i></button>
+            <button id="editor-redo" class="icon-button" type="button" title="Redo" aria-label="Redo" disabled><i class="ph ph-arrow-u-up-right"></i></button>
+          </div>
+          <div class="editor-project-name">
+            <span class="project-dot"></span>
+            <span class="brand-wordmark brand-wordmark--editor">
+              <img src="/src/assets/pikscreen-wordmark-transparent.png" alt="PikScreen" />
+            </span>
+            <small id="editor-video-status">Loading preview...</small>
+          </div>
+          <div class="editor-topbar-side editor-topbar-right">
+            <span id="editor-save-state" class="editor-save-state">Saved</span>
+            <button id="editor-export" class="primary-button" type="button"><i class="ph ph-export"></i> Export</button>
+          </div>
+        </header>
+
+        <div class="editor-workspace">
+          <nav class="editor-tool-rail" aria-label="Editor tools">
+            <button class="editor-tool active" type="button" data-editor-tool="scene" aria-label="Scene" title="Scene"><i class="ph ph-image-square"></i><span>Scene</span></button>
+            <button class="editor-tool" type="button" data-editor-tool="cursor" aria-label="Cursor" title="Cursor"><i class="ph ph-cursor"></i><span>Cursor</span></button>
+            <button class="editor-tool" type="button" data-editor-tool="zoom" aria-label="Zoom" title="Zoom"><i class="ph ph-magnifying-glass-plus"></i><span>Zoom</span></button>
+            <button class="editor-tool" type="button" data-editor-tool="webcam" aria-label="Webcam" title="Webcam"><i class="ph ph-webcam"></i><span>Camera</span></button>
+          </nav>
+
+          <aside class="editor-inspector" aria-label="Editor settings">
+            <section class="editor-tool-panel active" data-editor-panel="scene">
+              <div class="inspector-heading"><span>Scene</span><h2>Frame the recording</h2><p>Choose the background behind your captured screen.</p></div>
+              <select id="editor-background" class="visually-hidden" aria-label="Editor background">
+                <option value="tahoeDark">Tahoe Dark</option><option value="tahoeLight">Tahoe Light</option>
+                <option value="midnight8">Midnight</option><option value="sequoiaBlue">Sequoia Blue</option>
+                <option value="sequoiaBlueOrange">Sequoia Blue Orange</option><option value="sonomaClouds">Sonoma Clouds</option>
+                <option value="sonomaLight">Sonoma Light</option><option value="sonomaDark">Sonoma Dark</option>
+                <option value="sonomaEvening">Sonoma Evening</option><option value="sonomaHorizon">Sonoma Horizon</option>
+                <option value="ventura">Ventura</option><option value="venturaDark">Ventura Dark</option>
+                <option value="ipad17Dark">iPadOS Dark</option><option value="ipad17Light">iPadOS Light</option>
+                <option value="glassmorphism3">Glass 03</option><option value="glassmorphism4">Glass 04</option>
+                <option value="energy19">Energy 19</option><option value="energy17">Energy 17</option>
+                <option value="wallpaper3">Wallpaper 03</option><option value="wallpaper4">Wallpaper 04</option>
+                <option value="wallpaper10">Wallpaper 10</option><option value="cityscape">Cityscape</option>
+                <option value="levels">Levels</option><option value="iridescent9">Iridescent</option>
+              </select>
+              <div class="wallpaper-grid editor-wallpapers" data-background-gallery="editor"></div>
+              <div class="inspector-action">
+                <div><strong>Custom background</strong><small id="editor-custom-background-name">No custom image</small></div>
+                <button id="editor-custom-background" class="secondary-button" type="button"><i class="ph ph-upload-simple"></i> Choose</button>
+              </div>
+            </section>
+
+            <section class="editor-tool-panel" data-editor-panel="cursor">
+              <div class="inspector-heading"><span>Cursor</span><h2>Pointer treatment</h2><p>Adjust movement, scale, and click feedback.</p></div>
+              <label class="switch-row simple"><span><strong>Show cursor</strong><small>Zoom markers remain active when hidden.</small></span><input id="editor-cursor-visible" type="checkbox" /></label>
+              <label class="range-field"><span><b>Size</b><output id="editor-cursor-size-output">100%</output></span><input id="editor-cursor-size" type="range" min="60" max="150" value="100" /></label>
+              <label class="range-field"><span><b>Smoothing</b><output id="editor-cursor-smoothing-output">35%</output></span><input id="editor-cursor-smoothing" type="range" min="0" max="100" value="35" /></label>
+              <label class="switch-row simple"><span><strong>Click effects</strong><small>Warm left and violet right pulses.</small></span><input id="editor-click-effects" type="checkbox" /></label>
+              <div class="inspector-action">
+                <div><strong>Custom cursor</strong><small id="editor-custom-cursor-name">Tahoe cursor set</small></div>
+                <button id="editor-custom-cursor" class="secondary-button" type="button"><i class="ph ph-upload-simple"></i> Choose</button>
+              </div>
+            </section>
+
+            <section class="editor-tool-panel" data-editor-panel="zoom">
+              <div class="inspector-heading split">
+                <div><span>Zoom</span><h2 id="editor-selection-title">Select a zoom region</h2><p>Move, resize, and retarget detected zooms.</p></div>
+                <button id="editor-delete-marker" class="icon-button danger-ghost" type="button" aria-label="Delete zoom" title="Delete zoom" disabled><i class="ph ph-trash"></i></button>
+              </div>
+              <div id="editor-marker-fields" class="marker-settings" hidden>
+                <label class="range-field"><span><b>Depth</b><output id="editor-marker-depth-output">1.8×</output></span><input id="editor-marker-depth" type="range" min="120" max="240" value="180" /></label>
+                <label class="range-field"><span><b>Horizontal focus</b><output id="editor-marker-x-output">50%</output></span><input id="editor-marker-x" type="range" min="0" max="100" value="50" /></label>
+                <label class="range-field"><span><b>Vertical focus</b><output id="editor-marker-y-output">50%</output></span><input id="editor-marker-y" type="range" min="0" max="100" value="50" /></label>
+                <label class="number-field"><span>Duration</span><div><input id="editor-marker-duration" type="number" min="1" step="0.1" value="3" /><small>seconds</small></div></label>
+                <label class="switch-row simple"><span><strong>Hide cursor</strong><small>Only inside this zoom region.</small></span><input id="editor-marker-hide-cursor" type="checkbox" /></label>
+              </div>
+              <div class="empty-selection">
+                <i class="ph ph-magnifying-glass-plus"></i>
+                <p>Select a region in the timeline or add one at the playhead.</p>
+              </div>
+              <button id="editor-add-marker" class="secondary-button full-width" type="button"><i class="ph ph-plus"></i> Add zoom at playhead</button>
+            </section>
+
+            <section class="editor-tool-panel" data-editor-panel="webcam">
+              <div class="inspector-heading"><span>Camera</span><h2>Webcam bubble</h2><p id="editor-webcam-availability">Recorded camera layer</p></div>
+              <label class="switch-row simple"><span><strong>Show webcam</strong><small>Use the captured camera track.</small></span><input id="editor-webcam-enabled" type="checkbox" /></label>
+              <label class="switch-row simple"><span><strong>Mirror</strong><small>Flip the camera horizontally.</small></span><input id="editor-webcam-mirror" type="checkbox" /></label>
+              <label class="range-field"><span><b>Size</b><output id="editor-webcam-size-output">25%</output></span><input id="editor-webcam-size" type="range" min="10" max="100" value="25" /></label>
+              <label class="range-field"><span><b>Roundness</b><output id="editor-webcam-roundness-output">32</output></span><input id="editor-webcam-roundness" type="range" min="0" max="160" value="32" /></label>
+              <label class="range-field"><span><b>Shadow</b><output id="editor-webcam-shadow-output">45%</output></span><input id="editor-webcam-shadow" type="range" min="0" max="100" value="45" /></label>
+              <label class="switch-row simple"><span><strong>React to zoom</strong><small>Move with the focused frame.</small></span><input id="editor-webcam-react" type="checkbox" /></label>
+            </section>
+          </aside>
+
+          <main class="editor-preview-column">
+            <div class="preview-meta">
+              <span id="editor-aspect-label"><i class="ph ph-monitor"></i> 16:9</span>
+              <span>Click the preview to retarget a selected zoom</span>
+            </div>
+            <section class="editor-preview-stage recordly-preview-stage" aria-label="Recording preview">
+              <div id="editor-scene-viewport" class="editor-scene-viewport">
+                <div id="editor-scene-canvas" class="editor-scene-canvas">
+                  <div id="editor-camera-frame" class="editor-camera-frame">
+                    <video id="editor-video" playsinline preload="metadata"></video>
+                    <div id="editor-click-layer" class="editor-click-layer" aria-hidden="true"></div>
+                    <img id="editor-live-cursor" class="editor-live-cursor" alt="" aria-hidden="true" />
+                    <div id="editor-focus-preview" class="editor-focus-preview" hidden><span></span></div>
+                  </div>
+                </div>
+                <video id="editor-webcam-preview" class="editor-webcam-preview" playsinline muted preload="metadata" hidden></video>
+              </div>
+              <audio id="editor-audio-preview" preload="metadata"></audio>
+            </section>
+            <div class="editor-playback-bar">
+              <output id="editor-playhead-output">00:00.0</output>
+              <button id="editor-skip-back" class="icon-button" type="button" aria-label="Back five seconds"><i class="ph ph-skip-back"></i></button>
+              <button id="editor-play" class="play-button" type="button" aria-label="Play"><i class="ph-fill ph-play"></i></button>
+              <button id="editor-skip-forward" class="icon-button" type="button" aria-label="Forward five seconds"><i class="ph ph-skip-forward"></i></button>
+              <output id="editor-duration">00:00.0</output>
+              <span class="playback-divider"></span>
+              <button id="editor-volume" class="icon-button" type="button" aria-label="Mute preview"><i class="ph ph-speaker-high"></i></button>
+            </div>
+            <button id="editor-add-marker-toolbar" class="preview-add-zoom" type="button"><i class="ph ph-plus"></i> Add zoom</button>
+          </main>
+
+          <section class="editor-timeline" aria-label="Timeline">
+            <div class="timeline-heading">
+              <div><strong>Timeline</strong><span>Drag to retime</span></div>
+              <div id="editor-ruler-labels" class="timeline-ruler-labels"></div>
+            </div>
+            <div class="timeline-grid">
+              <div class="track-label"><span class="track-icon zoom"><i class="ph ph-magnifying-glass-plus"></i></span><strong>Zoom</strong></div>
+              <div id="editor-marker-lane" class="track-lane zoom-lane"></div>
+              <div class="track-label"><span class="track-icon clip"><i class="ph ph-film-strip"></i></span><strong>Clip</strong></div>
+              <div id="editor-clip-lane" class="track-lane clip-lane">
+                <div id="editor-clip-region" class="clip-region"><span class="trim-handle recordly-trim-handle start"></span><span><i class="ph ph-monitor-play"></i> Screen recording</span><span class="trim-handle recordly-trim-handle end"></span></div>
+              </div>
+              <input id="editor-playhead" class="playhead-input" type="range" min="0" max="0" value="0" step="10" aria-label="Timeline playhead" />
+              <div id="editor-playhead-line" class="playhead-line"><span></span></div>
+            </div>
+          </section>
+        </div>
+
+        <section id="editor-export-menu" class="export-menu" hidden>
+          <div class="export-menu-heading"><span class="export-icon"><i class="ph ph-export"></i></span><div><h2>Export video</h2><p>Render the current timeline and save an MP4.</p></div></div>
+          <dl><div><dt>Frame rate</dt><dd id="editor-export-fps">120 FPS</dd></div><div><dt>Quality</dt><dd id="editor-export-quality">High</dd></div></dl>
+          <button id="editor-save" class="primary-button full-width" type="button"><i class="ph ph-download-simple"></i> Export MP4</button>
+        </section>
+
+        <section id="editor-render-overlay" class="render-overlay" hidden>
+          <div class="render-dialog">
+            <span class="render-spinner"><i class="ph ph-spinner-gap"></i></span>
+            <div><h2 id="editor-render-status">Rendering changes</h2><p>Your source recording stays untouched.</p></div>
+            <progress id="editor-progress" max="100" value="0"></progress>
+            <output id="editor-render-percent">0%</output>
+          </div>
+        </section>
+      </section>
+
+      <footer class="action-rail" aria-label="Recording controls">
+        <span class="hud-drag-handle" data-tauri-drag-region aria-hidden="true">
+          <svg class="hud-svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <circle cx="9" cy="5" r="1.35"></circle>
+            <circle cx="15" cy="5" r="1.35"></circle>
+            <circle cx="9" cy="12" r="1.35"></circle>
+            <circle cx="15" cy="12" r="1.35"></circle>
+            <circle cx="9" cy="19" r="1.35"></circle>
+            <circle cx="15" cy="19" r="1.35"></circle>
+          </svg>
+        </span>
+        <div class="hud-source-block">
+          <button id="hud-select-source" class="hud-source-button" type="button">
+            <svg class="hud-svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="3" y="4" width="18" height="13" rx="2"></rect>
+              <path d="M9 21h6M12 17v4"></path>
+              <path class="hud-svg-fill" d="m10 8.2 5 2.8-5 2.8z"></path>
+            </svg>
+            <span>Screen</span>
+          </button>
+          <button id="change-monitor" class="hud-source-button" type="button" hidden>
+            <svg class="hud-svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M20 7v5h-5"></path>
+              <path d="M4 17v-5h5"></path>
+              <path d="M6.1 8.5A7 7 0 0 1 18.7 7L20 12"></path>
+              <path d="M17.9 15.5A7 7 0 0 1 5.3 17L4 12"></path>
+            </svg>
+            <span>Change</span>
+          </button>
+        </div>
+        <span class="hud-separator"></span>
+        <div class="hud-status-block">
+          <div id="hud-live-state" class="hud-live-state" hidden><span></span><b>REC</b><strong id="recording-elapsed">00:00.0</strong></div>
+          <strong id="hud-session-copy">Choose a screen or window</strong>
+          <p id="capture-status" aria-live="polite">Ready for a new recording</p>
+        </div>
+        <span class="hud-separator"></span>
+        <div class="hud-audio-group">
+          <button id="hud-system-audio" class="hud-icon-toggle" type="button" aria-pressed="true" title="System audio: on">
+            <svg class="hud-svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M11 5 6.5 9H3v6h3.5l4.5 4z"></path>
+              <path d="M15 8.5a5 5 0 0 1 0 7"></path>
+              <path d="M18 6a8.5 8.5 0 0 1 0 12"></path>
+            </svg>
+          </button>
+          <button id="hud-microphone" class="hud-icon-toggle" type="button" aria-pressed="true" title="Microphone: on">
+            <svg class="hud-svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+              <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"></path>
+            </svg>
+          </button>
+        </div>
+        <button id="start-recording" class="record-button" type="button" aria-label="Start recording" title="Start recording" disabled hidden><span></span></button>
+        <button id="stop-recording" class="record-button is-recording" type="button" aria-label="Stop recording" title="Stop recording" disabled hidden><span></span></button>
+        <span class="hud-separator"></span>
+        <button id="toggle-settings" class="hud-more-button" type="button" aria-expanded="false" aria-controls="settings-popover" title="Settings" aria-label="Open settings">
+          <svg class="hud-svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 7h5M15 7h5M4 17h9M19 17h1"></path>
+            <circle cx="12" cy="7" r="3"></circle>
+            <circle cx="16" cy="17" r="3"></circle>
+          </svg>
+        </button>
+      </footer>
+    </main>
+  </body>
+</html>

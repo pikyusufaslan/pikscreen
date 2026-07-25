@@ -1,0 +1,87 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(std430, set = 0, binding = 0) readonly buffer Source {
+    uint pixels[];
+} source;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D destination;
+
+layout(push_constant) uniform Parameters {
+    uint use_source;
+    uint use_canvas;
+    float scale;
+    float crop_x;
+    float crop_y;
+    float cursor_x;
+    float cursor_y;
+} parameters;
+
+vec4 unpack_rgba(uint packed) {
+    return vec4(
+        float(packed & 255u),
+        float((packed >> 8u) & 255u),
+        float((packed >> 16u) & 255u),
+        float((packed >> 24u) & 255u)) / 255.0;
+}
+
+vec4 sample_source(ivec2 size, vec2 uv) {
+    vec2 position = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(size - 1);
+    ivec2 lower = ivec2(floor(position));
+    ivec2 upper = min(lower + ivec2(1), size - 1);
+    vec2 fraction = fract(position);
+    vec4 top = mix(
+        unpack_rgba(source.pixels[lower.y * size.x + lower.x]),
+        unpack_rgba(source.pixels[lower.y * size.x + upper.x]),
+        fraction.x);
+    vec4 bottom = mix(
+        unpack_rgba(source.pixels[upper.y * size.x + lower.x]),
+        unpack_rgba(source.pixels[upper.y * size.x + upper.x]),
+        fraction.x);
+    return mix(top, bottom, fraction.y);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(destination);
+    if (any(greaterThanEqual(pixel, size))) return;
+    uint pixel_count = uint(size.x * size.y);
+    uint index = uint(pixel.y * size.x + pixel.x);
+    vec4 color;
+    if (parameters.use_source != 0 && parameters.use_canvas != 0) {
+        color = unpack_rgba(source.pixels[index + pixel_count]);
+        int content_width = int(float(size.x) * 0.92 + 0.5);
+        int content_height = int(float(size.y) * 0.92 + 0.5);
+        ivec2 origin = ivec2((size.x - content_width) / 2, (size.y - content_height) / 2);
+        ivec2 local = pixel - origin;
+        bool inside = local.x >= 0 && local.y >= 0 && local.x < content_width && local.y < content_height;
+        if (inside) {
+            vec2 centered = abs(vec2(local) - vec2(content_width, content_height) * 0.5);
+            vec2 corner = max(centered - (vec2(content_width, content_height) * 0.5 - vec2(12.5)), vec2(0.0));
+            float curve = pow(corner.x / 12.5, 4.5) + pow(corner.y / 12.5, 4.5);
+            if (curve < 1.0) {
+                vec2 uv = vec2(parameters.crop_x, parameters.crop_y)
+                    + (vec2(local) + 0.5) / vec2(content_width, content_height) / parameters.scale;
+                color = sample_source(size, uv);
+            }
+        }
+    } else if (parameters.use_source != 0) {
+        color = unpack_rgba(source.pixels[index]);
+    } else {
+        vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+        color = vec4(uv.x, uv.y, 0.27, 1.0);
+    }
+
+    if (parameters.cursor_x >= 0.0 && parameters.cursor_y >= 0.0 && parameters.use_canvas != 0) {
+        const ivec2 cursor_size = ivec2(618, 958);
+        const vec2 rendered_size = vec2(51.6075, 80.0);
+        const vec2 hotspot = rendered_size * vec2(0.14, 0.06);
+        ivec2 cursor_local = ivec2(vec2(pixel) - vec2(parameters.cursor_x * size.x, parameters.cursor_y * size.y) + hotspot);
+        if (all(greaterThanEqual(cursor_local, ivec2(0))) && all(lessThan(cursor_local, ivec2(rendered_size)))) {
+            ivec2 source_pixel = ivec2(vec2(cursor_local) * vec2(cursor_size) / rendered_size);
+            uint cursor_offset = pixel_count * 2;
+            vec4 pointer = unpack_rgba(source.pixels[cursor_offset + uint(source_pixel.y * cursor_size.x + source_pixel.x)]);
+            color = mix(color, pointer, pointer.a);
+        }
+    }
+    imageStore(destination, pixel, color);
+}

@@ -1,0 +1,31 @@
+.pikscreen-guide {
+  border: 3px solid rgba(73, 153, 255, 0.96);
+  border-radius: 24px;
+  background-color: rgba(30, 115, 232, 0.18);
+  box-shadow: 0 0 28px rgba(73, 153, 255, 0.4);
+}
+
+.pikscreen-guide-orange {
+  border-color: rgba(255, 159, 75, 0.98);
+  background-color: rgba(232, 110, 30, 0.18);
+  box-shadow: 0 0 28px rgba(255, 159, 75, 0.42);
+}
+
+.pikscreen-countdown {
+  min-width: 136px;
+  min-height: 136px;
+  border-radius: 68px;
+  background-color: rgba(18, 18, 22, 0.88);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  font-size: 76px;
+  font-weight: 800;
+  text-align: center;
+  padding: 14px 22px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48);
+}
+
+.pikscreen-recording-border {
+  border: 3px solid rgba(255, 66, 88, 0.95);
+  box-shadow: inset 0 0 24px rgba(255, 42, 68, 0.34), 0 0 18px rgba(255, 42, 68, 0.28);
+}

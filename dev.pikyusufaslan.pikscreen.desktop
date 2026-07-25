@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PikScreen
+Comment=Screen recording with post-recording zoom markers
+Exec=pikscreen
+Terminal=false
+Categories=AudioVideo;Recorder;
+StartupWMClass=PikScreen
