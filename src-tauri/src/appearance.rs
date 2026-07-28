@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, FilePath};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,16 +13,14 @@ pub struct AppearanceAsset {
     pub label: String,
 }
 
-pub fn choose(app: &AppHandle, kind: &str) -> Result<Option<AppearanceAsset>, String> {
-    let (title, slot, filters) = match kind {
+pub async fn choose(app: AppHandle, kind: String) -> Result<Option<AppearanceAsset>, String> {
+    let (title, filters) = match kind.as_str() {
         "cursor" => (
             "Choose custom cursor",
-            "custom-cursor",
             vec![("Cursor image", vec!["png", "jpg", "jpeg", "webp"])],
         ),
         "background" => (
             "Choose custom background",
-            "custom-background",
             vec![(
                 "Background image",
                 vec!["png", "jpg", "jpeg", "webp", "avif"],
@@ -34,8 +32,27 @@ pub fn choose(app: &AppHandle, kind: &str) -> Result<Option<AppearanceAsset>, St
     for (name, extensions) in filters {
         dialog = dialog.add_filter(name, &extensions);
     }
-    let Some(selection) = dialog.blocking_pick_file() else {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    dialog.pick_file(move |selection| {
+        let _ = sender.send(selection);
+    });
+    let selection = tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|error| format!("Appearance picker task failed: {error}"))?
+        .map_err(|error| format!("Appearance picker closed unexpectedly: {error}"))?;
+    let Some(selection) = selection else {
         return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || import_selection(&kind, selection))
+        .await
+        .map_err(|error| format!("Appearance import task failed: {error}"))?
+}
+
+fn import_selection(kind: &str, selection: FilePath) -> Result<Option<AppearanceAsset>, String> {
+    let slot = match kind {
+        "cursor" => "custom-cursor",
+        "background" => "custom-background",
+        _ => return Err("Unknown appearance asset kind.".to_owned()),
     };
     let source = selection
         .into_path()

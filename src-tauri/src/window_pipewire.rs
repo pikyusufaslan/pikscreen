@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{Read, Result as IoResult},
+    io::{Read, Result as IoResult, Write},
     os::{
         fd::{AsRawFd, OwnedFd},
         unix::process::{CommandExt, ExitStatusExt},
@@ -14,6 +14,8 @@ use std::{
 const CHILD_PIPEWIRE_FD: i32 = 33;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
+const STARTUP_FRAME_TIMEOUT: Duration = Duration::from_secs(3);
+const DEBUG_LOG_PATH: &str = "/tmp/pikscreen-window-pipewire.log";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowPipelineProfile {
@@ -103,6 +105,10 @@ pub fn spawn_recorder(
     output_path: &Path,
 ) -> Result<WindowRecorder, String> {
     let (width, height) = even_dimensions(width, height);
+    // A failed profile can leave an empty Matroska file behind.  Each retry
+    // must start from a clean target so a later profile is not mistaken for a
+    // working stream merely because the previous muxer wrote its header.
+    let _ = fs::remove_file(output_path);
     let args = recording_pipeline_args(
         node_id,
         profile,
@@ -124,20 +130,60 @@ pub fn spawn_recorder(
 }
 
 pub fn ensure_recorder_started(recorder: &mut WindowRecorder) -> Result<(), String> {
-    thread::sleep(Duration::from_millis(200));
-    let Some(status) = recorder
-        .child
-        .try_wait()
-        .map_err(|error| format!("Could not inspect the window PipeWire pipeline: {error}"))?
-    else {
-        return Ok(());
-    };
-    Err(format!(
-        "{} recorder failed during startup with {}: {}",
-        recorder.profile.label(),
-        status,
-        compact_log(&read_child_stderr(&mut recorder.child))
-    ))
+    let started_at = Instant::now();
+    loop {
+        if let Some(status) = recorder
+            .child
+            .try_wait()
+            .map_err(|error| format!("Could not inspect the window PipeWire pipeline: {error}"))?
+        {
+            let diagnostic = compact_log(&read_child_stderr(&mut recorder.child));
+            append_debug_log(&format!(
+                "{} exited during startup with {status}: {diagnostic}",
+                recorder.profile.label()
+            ));
+            return Err(format!(
+                "{} recorder failed during startup with {}: {}",
+                recorder.profile.label(),
+                status,
+                diagnostic
+            ));
+        }
+
+        // A running gst-launch process is not enough: Niri can accept a
+        // window stream connection and then never deliver a frame.  A
+        // streamable Matroska file grows as soon as the first encoded frame
+        // reaches the muxer, so use that as the startup readiness signal.
+        let has_frame_data = fs::metadata(&recorder.output_path)
+            .map(|metadata| metadata.len() > 1_024)
+            .unwrap_or(false);
+        if has_frame_data {
+            return Ok(());
+        }
+
+        if started_at.elapsed() >= STARTUP_FRAME_TIMEOUT {
+            let _ = signal_child(&recorder.child, libc::SIGINT);
+            let result = wait_for_child_inner(&mut recorder.child, Duration::from_secs(1));
+            let (diagnostic, raw) = match result {
+                Ok(result) => (compact_log(&result.stderr), Some(result.stderr)),
+                Err(error) => (error, None),
+            };
+            append_debug_log(&format!(
+                "{} timed out waiting for a first frame: {diagnostic}",
+                recorder.profile.label()
+            ));
+            if let Some(raw) = raw {
+                append_debug_blob(&format!("{} full stderr", recorder.profile.label()), &raw);
+            }
+            return Err(format!(
+                "{} recorder did not receive a first frame within {:.1}s: {}",
+                recorder.profile.label(),
+                STARTUP_FRAME_TIMEOUT.as_secs_f64(),
+                diagnostic
+            ));
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 pub fn stop_recorder(mut recorder: WindowRecorder) -> Result<(), String> {
@@ -191,30 +237,43 @@ fn recording_pipeline_args(
     output_path: &Path,
     num_buffers: Option<u32>,
 ) -> Vec<String> {
-    let mut args = pipeline_prefix(node_id, profile);
+    let mut args = pipeline_prefix(node_id);
     args.extend(profile_conversion_args(profile));
+    let raw_format = match profile {
+        WindowPipelineProfile::DmaBufGlVaapi => "NV12",
+        WindowPipelineProfile::MemFdX264 => "I420",
+    };
     args.extend([
         "!".to_owned(),
         "videoconvert".to_owned(),
         "!".to_owned(),
         "videoscale".to_owned(),
         "!".to_owned(),
-        format!("video/x-raw,format=NV12,width={width},height={height}"),
+        // A compositor screencast is damage driven, so the PipeWire stream
+        // advertises framerate=0/1.  videoconvert and videoscale pass the
+        // framerate through untouched, so pinning one here leaves nothing to
+        // intersect and the pipeline dies during preroll with
+        // "no more input formats".  The compositor below sets the constant
+        // rate the encoder needs, and force-live keeps it emitting while an
+        // idle window sends no new frames.
+        format!("video/x-raw,format={raw_format},width={width},height={height}"),
         "!".to_owned(),
         "compositor".to_owned(),
         "force-live=true".to_owned(),
         "start-time-selection=first".to_owned(),
         "background=black".to_owned(),
         "!".to_owned(),
-        format!("video/x-raw,format=NV12,width={width},height={height},framerate={fps}/1"),
-        "!".to_owned(),
+        format!("video/x-raw,format={raw_format},width={width},height={height},framerate={fps}/1"),
     ]);
     if let Some(num_buffers) = num_buffers {
         args.extend([
+            "!".to_owned(),
             "identity".to_owned(),
             format!("eos-after={}", identity_eos_after(num_buffers)),
             "!".to_owned(),
         ]);
+    } else {
+        args.push("!".to_owned());
     }
     match profile {
         WindowPipelineProfile::DmaBufGlVaapi => args.extend([
@@ -268,7 +327,7 @@ fn identity_eos_after(output_frames: u32) -> u32 {
     output_frames.saturating_add(1)
 }
 
-fn pipeline_prefix(node_id: u32, profile: WindowPipelineProfile) -> Vec<String> {
+fn pipeline_prefix(node_id: u32) -> Vec<String> {
     let mut args = vec![
         "-q".to_owned(),
         "-e".to_owned(),
@@ -277,13 +336,11 @@ fn pipeline_prefix(node_id: u32, profile: WindowPipelineProfile) -> Vec<String> 
         format!("path={node_id}"),
         "do-timestamp=true".to_owned(),
     ];
-    args.extend(["!".to_owned(), "queue".to_owned(), "!".to_owned()]);
-    args.push(match profile {
-        WindowPipelineProfile::DmaBufGlVaapi => {
-            "video/x-raw(memory:DMABuf),format=DMA_DRM".to_owned()
-        }
-        WindowPipelineProfile::MemFdX264 => "video/x-raw,format=BGRx".to_owned(),
-    });
+    args.extend(["!".to_owned(), "queue".to_owned()]);
+    // No memory:DMABuf caps filter here.  niri offers the stream as BGRx/BGRA
+    // with a DRM modifier, which does not intersect a pinned DMA_DRM format,
+    // and pinning memory:DMABuf alone fails the same way.  glupload picks the
+    // DMA-BUF import path on its own when the producer exports one.
     args
 }
 
@@ -303,8 +360,17 @@ fn profile_conversion_args(profile: WindowPipelineProfile) -> Vec<String> {
 
 fn spawn_gst(pipewire_fd: OwnedFd, args: &[String]) -> Result<Child, String> {
     let mut command = Command::new("gst-launch-1.0");
+    append_debug_log(&format!("spawn gst-launch-1.0 {}", args.join(" ")));
     command
         .args(args)
+        // Keep PipeWire's stream setup in the error returned to the UI. The
+        // portal remote is intentionally private, so this is the useful
+        // diagnostic path when a chosen window fails after the picker closes.
+        // GST_CAPS is deliberately absent: a single caps query on this source
+        // prints tens of kilobytes and pushes the pipewiresrc lines that carry
+        // the actual failure out of every capped log.
+        .env("GST_DEBUG", "pipewiresrc:6")
+        .env("GST_DEBUG_NO_COLOR", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -410,12 +476,47 @@ fn compact_log(log: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" | ");
-    if compact.len() > 2_000 {
-        format!("{}…", &compact[..2_000])
+    if compact.len() > 4_000 {
+        // Startup failures often put the useful caps rejection at the end of
+        // the trace, while the stream setup is at the beginning. Keep both.
+        format!(
+            "{} … {}",
+            &compact[..800],
+            &compact[compact.len() - 3_000..]
+        )
     } else if compact.is_empty() {
         "no diagnostic output".to_owned()
     } else {
         compact
+    }
+}
+
+/// Append a child's untouched output. `compact_log` caps what the UI carries,
+/// but a stream that never negotiates only says so once, so the log file keeps
+/// the whole thing.
+fn append_debug_blob(label: &str, blob: &str) {
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(DEBUG_LOG_PATH)
+    {
+        let _ = writeln!(file, "----- {label} begin -----");
+        let _ = file.write_all(blob.as_bytes());
+        let _ = writeln!(file, "\n----- {label} end -----");
+    }
+}
+
+fn append_debug_log(line: &str) {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(DEBUG_LOG_PATH)
+    {
+        let _ = writeln!(file, "[{timestamp}] {line}");
     }
 }
 
@@ -521,13 +622,51 @@ mod tests {
             None,
         );
         assert!(args.contains(&"path=42".to_owned()));
-        assert!(args.contains(&"video/x-raw(memory:DMABuf),format=DMA_DRM".to_owned()));
+        assert!(args.contains(&"glupload".to_owned()));
         assert!(args.contains(&"vah264enc".to_owned()));
         assert!(!args.iter().any(|arg| arg == "-g"));
     }
 
+    /// The source pad of pipewiresrc carries whatever niri advertises: a
+    /// damage driven stream with framerate=0/1, and BGRx/BGRA in DMA-BUF
+    /// memory rather than DMA_DRM.  Constraining either one before an element
+    /// that can convert it makes negotiation fail with "no more input
+    /// formats", which reaches the UI as a missing first frame.
     #[test]
-    fn memfd_fallback_forces_cpu_readable_video() {
+    fn window_recording_leaves_the_source_caps_convertible() {
+        for profile in WindowPipelineProfile::ALL {
+            let args = recording_pipeline_args(
+                7,
+                profile,
+                1_920,
+                1_080,
+                120,
+                18,
+                "medium",
+                2_048,
+                Path::new("/tmp/window.mkv"),
+                None,
+            );
+
+            let converter = args
+                .iter()
+                .position(|arg| arg == "compositor")
+                .expect("every profile needs a rate converter for an idle window");
+            let pinned_before_converter = args[..converter]
+                .iter()
+                .any(|arg| arg.contains("framerate=") || arg.contains("DMABuf"));
+
+            assert!(
+                !pinned_before_converter,
+                "{:?} pins caps pipewiresrc cannot satisfy: {args:?}",
+                profile
+            );
+            assert!(args.contains(&"force-live=true".to_owned()));
+        }
+    }
+
+    #[test]
+    fn memfd_fallback_accepts_any_cpu_readable_raw_format() {
         let args = recording_pipeline_args(
             9,
             WindowPipelineProfile::MemFdX264,
@@ -540,14 +679,16 @@ mod tests {
             Path::new("/tmp/window.mp4"),
             Some(2),
         );
-        assert!(args.contains(&"video/x-raw,format=BGRx".to_owned()));
+        assert!(!args.iter().any(|arg| arg == "video/x-raw,format=BGRx"));
+        assert!(args.contains(&"videoconvert".to_owned()));
         assert!(args.contains(&"x264enc".to_owned()));
         assert!(args.contains(&"pass=qual".to_owned()));
         assert!(args.contains(&"quantizer=20".to_owned()));
         assert!(args.contains(&"bitrate=100000".to_owned()));
+        assert!(args.contains(&"video/x-raw,format=I420,width=800,height=600".to_owned()));
+        assert!(args
+            .contains(&"video/x-raw,format=I420,width=800,height=600,framerate=60/1".to_owned()));
         assert!(args.contains(&"compositor".to_owned()));
-        assert!(args.contains(&"force-live=true".to_owned()));
-        assert!(args.contains(&"start-time-selection=first".to_owned()));
         assert!(args.contains(&"identity".to_owned()));
         assert!(args.contains(&"eos-after=3".to_owned()));
         assert!(!args.contains(&"num-buffers=2".to_owned()));
@@ -555,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn portal_recording_repeats_the_latest_real_frame_on_a_live_clock() {
+    fn memfd_recording_negotiates_the_requested_cpu_format_and_fps() {
         let args = recording_pipeline_args(
             9,
             WindowPipelineProfile::MemFdX264,
@@ -569,10 +710,6 @@ mod tests {
             None,
         );
 
-        let compositor = args
-            .iter()
-            .position(|arg| arg == "compositor")
-            .expect("recording should have a live compositor");
         let output_caps = args
             .iter()
             .position(|arg| arg.contains("framerate=120/1"))
@@ -582,10 +719,11 @@ mod tests {
             .position(|arg| arg == "x264enc")
             .expect("recording should retain its encoder");
 
-        assert!(compositor < output_caps);
         assert!(output_caps < encoder);
-        assert!(args.contains(&"force-live=true".to_owned()));
-        assert!(args.contains(&"start-time-selection=first".to_owned()));
+        assert!(args.contains(
+            &"video/x-raw,format=I420,width=1920,height=1080,framerate=120/1".to_owned()
+        ));
+        assert!(args.contains(&"compositor".to_owned()));
         assert!(!args.iter().any(|arg| arg.starts_with("keepalive-time=")));
         assert!(!args.iter().any(|arg| arg.starts_with("eos-after=")));
     }

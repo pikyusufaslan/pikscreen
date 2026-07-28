@@ -69,6 +69,11 @@ const PORTAL_CLICK_DEDUP_MS: u64 = 16;
 const PORTAL_INTERMEDIATE_MAX_BITRATE_KBPS: u32 = 100_000;
 const KWIN_GUIDE_EXCLUSION_PLUGIN: &str = "dev.pikyusufaslan.pikscreen.guide-exclusion.v1";
 const KWIN_GUIDE_EXCLUSION_SCRIPT: &str = include_str!("../../tools/pikscreen-kwin-hide-guides.js");
+static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+fn trace_portal_selection(stage: &str) {
+    let _ = fs::write("/tmp/pikscreen-portal-selection.trace", stage);
+}
 
 #[derive(Clone, Debug, Serialize)]
 struct ProcessingProgress {
@@ -525,6 +530,8 @@ pub(crate) enum VideoQuality {
 #[derive(Clone, Copy, Debug, serde::Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum BackgroundStyle {
+    PureBlack,
+    PureWhite,
     TahoeLight,
     TahoeDark,
     Midnight8,
@@ -660,32 +667,41 @@ impl VideoQuality {
 }
 
 impl BackgroundStyle {
-    fn asset_file(self) -> &'static str {
+    fn asset_file(self) -> Option<&'static str> {
         match self {
-            Self::TahoeLight => "tahoe-light.jpg",
-            Self::TahoeDark => "tahoe-dark.jpg",
-            Self::Midnight8 => "midnight-8.jpg",
-            Self::Ipad17Dark => "ipad-17-dark.jpg",
-            Self::Ipad17Light => "ipad-17-light.jpg",
-            Self::SequoiaBlue => "sequoia-blue.jpg",
-            Self::SequoiaBlueOrange => "sequoia-blue-orange.jpg",
-            Self::Ventura => "ventura.jpg",
-            Self::SonomaClouds => "sonoma-clouds.jpg",
-            Self::SonomaLight => "sonoma-light.jpg",
-            Self::SonomaDark => "sonoma-dark.jpg",
-            Self::Glassmorphism3 => "glassmorphism-3.jpg",
-            Self::Glassmorphism4 => "glassmorphism-4.jpg",
-            Self::Energy19 => "energy-19.jpg",
-            Self::Wallpaper3 => "wallpaper3.jpg",
-            Self::Wallpaper4 => "wallpaper4.jpg",
-            Self::Cityscape => "cityscape.jpg",
-            Self::Levels => "levels.jpg",
-            Self::Wallpaper10 => "wallpaper10.jpg",
-            Self::VenturaDark => "ventura-dark.jpg",
-            Self::SonomaEvening => "sonoma-evening.jpg",
-            Self::SonomaHorizon => "sonoma-horizon.jpg",
-            Self::Iridescent9 => "iridescent-9.jpg",
-            Self::Energy17 => "energy-17.jpg",
+            Self::PureBlack | Self::PureWhite => None,
+            Self::TahoeLight => Some("tahoe-light.jpg"),
+            Self::TahoeDark => Some("tahoe-dark.jpg"),
+            Self::Midnight8 => Some("midnight-8.jpg"),
+            Self::Ipad17Dark => Some("ipad-17-dark.jpg"),
+            Self::Ipad17Light => Some("ipad-17-light.jpg"),
+            Self::SequoiaBlue => Some("sequoia-blue.jpg"),
+            Self::SequoiaBlueOrange => Some("sequoia-blue-orange.jpg"),
+            Self::Ventura => Some("ventura.jpg"),
+            Self::SonomaClouds => Some("sonoma-clouds.jpg"),
+            Self::SonomaLight => Some("sonoma-light.jpg"),
+            Self::SonomaDark => Some("sonoma-dark.jpg"),
+            Self::Glassmorphism3 => Some("glassmorphism-3.jpg"),
+            Self::Glassmorphism4 => Some("glassmorphism-4.jpg"),
+            Self::Energy19 => Some("energy-19.jpg"),
+            Self::Wallpaper3 => Some("wallpaper3.jpg"),
+            Self::Wallpaper4 => Some("wallpaper4.jpg"),
+            Self::Cityscape => Some("cityscape.jpg"),
+            Self::Levels => Some("levels.jpg"),
+            Self::Wallpaper10 => Some("wallpaper10.jpg"),
+            Self::VenturaDark => Some("ventura-dark.jpg"),
+            Self::SonomaEvening => Some("sonoma-evening.jpg"),
+            Self::SonomaHorizon => Some("sonoma-horizon.jpg"),
+            Self::Iridescent9 => Some("iridescent-9.jpg"),
+            Self::Energy17 => Some("energy-17.jpg"),
+        }
+    }
+
+    fn solid_color(self) -> Option<&'static str> {
+        match self {
+            Self::PureBlack => Some("black"),
+            Self::PureWhite => Some("white"),
+            _ => None,
         }
     }
 }
@@ -704,6 +720,7 @@ pub async fn select_monitor(
     _click: StartClick,
     preview_settings: PreviewSettings,
 ) -> Result<PreviewInfo, String> {
+    trace_portal_selection("select_monitor entered");
     if state
         .active
         .lock()
@@ -725,7 +742,13 @@ pub async fn select_monitor(
     }
     let id = state.next_capture_id.fetch_add(1, Ordering::Relaxed);
     let backend = capture_backend()?;
-    let portal = Screencast::new().await.map_err(|error| error.to_string())?;
+    trace_portal_selection("opening ScreenCast portal");
+    let portal = Screencast::new()
+        .await
+        .map_err(|error| {
+            trace_portal_selection(&format!("opening ScreenCast portal failed: {error}"));
+            format!("Could not open the ScreenCast portal: {error}")
+        })?;
     let interface_version = portal.version();
     let available_cursor_modes = screen_cast_cursor_modes(&portal)
         .await
@@ -736,10 +759,14 @@ pub async fn select_monitor(
         hyprland_cursor::session_available(),
         gnome_session,
     )?;
+    trace_portal_selection("creating ScreenCast session");
     let session = portal
         .create_session(Default::default())
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            trace_portal_selection(&format!("ScreenCast CreateSession failed: {error}"));
+            format!("ScreenCast CreateSession failed: {error}")
+        })?;
     let mut source_options = ashpd::desktop::screencast::SelectSourcesOptions::default()
         .set_sources(Some(SourceType::Monitor | SourceType::Window))
         .set_multiple(false);
@@ -747,16 +774,28 @@ pub async fn select_monitor(
     {
         source_options = source_options.set_cursor_mode(cursor_mode);
     }
+    trace_portal_selection("requesting ScreenCast sources");
     portal
         .select_sources(&session, source_options)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            trace_portal_selection(&format!("ScreenCast SelectSources failed: {error}"));
+            format!("ScreenCast SelectSources failed: {error}")
+        })?;
+    trace_portal_selection("starting ScreenCast picker");
     let streams = portal
         .start(&session, None, Default::default())
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| {
+            trace_portal_selection(&format!("ScreenCast Start failed: {error}"));
+            format!("ScreenCast Start failed: {error}")
+        })?
         .response()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            trace_portal_selection(&format!("ScreenCast Start response failed: {error}"));
+            format!("ScreenCast Start response failed: {error}")
+        })?;
+    trace_portal_selection("ScreenCast stream selected");
     let stream = streams
         .streams()
         .iter()
@@ -773,24 +812,34 @@ pub async fn select_monitor(
     };
     let node_id = stream.pipe_wire_node_id();
     let (mut x, mut y) = stream.position().unwrap_or((0, 0));
+    let metadata_size = valid_portal_stream_size(stream.size());
     let (mut width, mut height) = match portal_stream_size_authority(backend, source_kind) {
         PortalStreamSizeAuthority::Metadata => valid_portal_stream_size(stream.size())
             .ok_or_else(|| "The portal did not report a valid selected source size.".to_owned())?,
         PortalStreamSizeAuthority::NegotiatedPipeWire => {
-            let pipewire_fd = portal
-                .open_pipe_wire_remote(&session, Default::default())
-                .await
-                .map_err(|error| format!("Could not open the portal size remote: {error}"))?;
-            let (width, height) = portal_cursor::probe_stream_size(pipewire_fd, node_id)?;
-            (
-                i32::try_from(width)
-                    .map_err(|_| format!("PipeWire reported an invalid source width: {width}"))?,
-                i32::try_from(height)
-                    .map_err(|_| format!("PipeWire reported an invalid source height: {height}"))?,
-            )
+            // Niri's window portal stream can advertise a 1x1 placeholder until its
+            // focused-window geometry settles. The geometry below is the authoritative
+            // size for this path, so do not reject the selection on a redundant
+            // PipeWire size-only connection first.
+            if backend == CaptureBackend::Niri && source_kind == CaptureSourceKind::Window {
+                metadata_size.unwrap_or((1, 1))
+            } else {
+                let pipewire_fd = portal
+                    .open_pipe_wire_remote(&session, Default::default())
+                    .await
+                    .map_err(|error| format!("Could not open the portal size remote: {error}"))?;
+                let (width, height) = portal_cursor::probe_stream_size(pipewire_fd, node_id)?;
+                (
+                    i32::try_from(width).map_err(|_| {
+                        format!("PipeWire reported an invalid source width: {width}")
+                    })?,
+                    i32::try_from(height).map_err(|_| {
+                        format!("PipeWire reported an invalid source height: {height}")
+                    })?,
+                )
+            }
         }
     };
-    let (source_width, source_height) = (width, height);
     let window_id = if backend == CaptureBackend::Niri && source_kind == CaptureSourceKind::Window {
         let window_id = selected_niri_window_id(node_id)?;
         focus_niri_window(window_id)?;
@@ -807,6 +856,7 @@ pub async fn select_monitor(
     } else {
         None
     };
+    let (source_width, source_height) = (width, height);
     let crop =
         capture_crop_for_backend(backend, source_kind, x, y, width, height, preview_settings)?;
     let crop = if backend == CaptureBackend::Niri && source_kind == CaptureSourceKind::Window {
@@ -814,7 +864,15 @@ pub async fn select_monitor(
     } else {
         crop
     };
-    let portal_profile = if backend.uses_portal_stream(source_kind) {
+    let portal_profile = if backend == CaptureBackend::Niri
+        && source_kind == CaptureSourceKind::Window
+    {
+        // Niri's window stream may only produce frames after the picker has
+        // returned and focus has settled. A short preflight capture rejects
+        // otherwise valid selections here, so defer the real pipeline check
+        // to recording startup and use the CPU-readable profile.
+        Some(WindowPipelineProfile::MemFdX264)
+    } else if backend.uses_portal_stream(source_kind) {
         let probe_path = temporary_file("portal-pipewire-probe", "mp4");
         let mut failures = Vec::new();
         let mut selected = None;
@@ -1075,15 +1133,9 @@ pub fn start_recording(
         None
     };
     let mut recorder = if preview.backend.uses_portal_stream(preview.source_kind) {
-        let profile = preview.portal_profile.ok_or_else(|| {
+        let preferred_profile = preview.portal_profile.ok_or_else(|| {
             "The selected source has no verified portal PipeWire profile.".to_owned()
         })?;
-        let pipewire_fd = pollster::block_on(
-            preview
-                ._portal
-                .open_pipe_wire_remote(&preview._session, Default::default()),
-        )
-        .map_err(|error| format!("Could not open the portal recording remote: {error}"))?;
         let (quantizer, preset, max_bitrate_kbps) = match preview.backend {
             CaptureBackend::Portal => settings.quality.portal_intermediate_profile(),
             CaptureBackend::Niri => {
@@ -1091,18 +1143,79 @@ pub fn start_recording(
                 (quantizer.parse().unwrap_or(18), preset, 2_048)
             }
         };
-        let recorder = window_pipewire::spawn_recorder(
-            pipewire_fd,
-            preview.node_id,
-            profile,
-            preview.source_width as u32,
-            preview.source_height as u32,
-            settings.fps,
-            quantizer,
-            preset,
-            max_bitrate_kbps,
-            &source_path,
-        )?;
+        let mut profiles = vec![preferred_profile];
+        for profile in preview.backend.pipeline_profiles() {
+            if !profiles.contains(&profile) {
+                profiles.push(profile);
+            }
+        }
+        let mut failures = Vec::new();
+        let mut started_recorder = None;
+        for profile in profiles {
+            eprintln!(
+                "PikScreen starting {} for {} PipeWire node {} at {}x{} / {} FPS.",
+                profile.label(),
+                preview.source_kind.label(),
+                preview.node_id,
+                preview.source_width,
+                preview.source_height,
+                settings.fps,
+            );
+            let pipewire_fd = match pollster::block_on(
+                preview
+                    ._portal
+                    .open_pipe_wire_remote(&preview._session, Default::default()),
+            ) {
+                Ok(pipewire_fd) => pipewire_fd,
+                Err(error) => {
+                    failures.push(format!(
+                        "{} could not open the recording remote: {error}",
+                        profile.label()
+                    ));
+                    continue;
+                }
+            };
+            let mut candidate = match window_pipewire::spawn_recorder(
+                pipewire_fd,
+                preview.node_id,
+                profile,
+                preview.source_width as u32,
+                preview.source_height as u32,
+                settings.fps,
+                quantizer,
+                preset,
+                max_bitrate_kbps,
+                &source_path,
+            ) {
+                Ok(recorder) => recorder,
+                Err(error) => {
+                    failures.push(format!("{} could not start: {error}", profile.label()));
+                    continue;
+                }
+            };
+            match window_pipewire::ensure_recorder_started(&mut candidate) {
+                Ok(()) => {
+                    eprintln!(
+                        "PikScreen {} received the first {} frame.",
+                        profile.label(),
+                        preview.source_kind.label(),
+                    );
+                    started_recorder = Some(candidate);
+                    break;
+                }
+                Err(error) => {
+                    eprintln!("PikScreen {} startup failed: {error}", profile.label());
+                    failures.push(error);
+                }
+            }
+        }
+        let recorder = started_recorder.ok_or_else(|| {
+            format!(
+                "Could not start the selected {} PipeWire stream. {}",
+                preview.source_kind.label(),
+                failures.join(" | ")
+            )
+        })?;
         VideoRecorder::Portal(recorder)
     } else {
         VideoRecorder::WfRecorder(spawn_cursorless_recorder(
@@ -1114,7 +1227,9 @@ pub fn start_recording(
             settings.clone(),
         )?)
     };
-    ensure_video_recorder_started(&mut recorder)?;
+    if !preview.backend.uses_portal_stream(preview.source_kind) {
+        ensure_video_recorder_started(&mut recorder)?;
+    }
     let (audio_recorder, audio_path) = if settings.audio.captures_audio() {
         let audio_path = temporary_file("audio", "m4a");
         match spawn_audio_recorder(&audio_path, settings.audio.clone()) {
@@ -4654,7 +4769,9 @@ fn recordly_wallpaper_asset_path(
         appearance::validate_background(&path)?;
         return Ok(path);
     }
-    let file = background.asset_file();
+    let file = background
+        .asset_file()
+        .ok_or_else(|| "Solid backgrounds do not use wallpaper assets.".to_owned())?;
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("assets")
         .join("wallpapers")
@@ -4726,12 +4843,25 @@ fn recordly_frame_assets(
     .map_err(|error| format!("Could not create Recordly shadow layer: {error}"))?;
     rasterize_static_svg(&mask_svg_path, &mask_path, "Recordly squircle mask")?;
     rasterize_static_svg(&shadow_svg_path, &shadow_path, "Recordly shadow layer")?;
-    rasterize_wallpaper(
-        &recordly_wallpaper_asset_path(background, custom_background_path)?,
-        &wallpaper_path,
-        width,
-        height,
-    )?;
+    if custom_background_path.is_none() {
+        if let Some(color) = background.solid_color() {
+            rasterize_solid_wallpaper(color, &wallpaper_path, width, height)?;
+        } else {
+            rasterize_wallpaper(
+                &recordly_wallpaper_asset_path(background, None)?,
+                &wallpaper_path,
+                width,
+                height,
+            )?;
+        }
+    } else {
+        rasterize_wallpaper(
+            &recordly_wallpaper_asset_path(background, custom_background_path)?,
+            &wallpaper_path,
+            width,
+            height,
+        )?;
+    }
     let _ = std::fs::remove_file(mask_svg_path);
     let _ = std::fs::remove_file(shadow_svg_path);
     Ok(RecordlyFrameAssets {
@@ -4773,6 +4903,42 @@ fn rasterize_wallpaper(
     } else {
         Err(format!(
             "Could not rasterize Recordly wallpaper: {} [{}]",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+fn rasterize_solid_wallpaper(
+    color: &str,
+    output_path: &PathBuf,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let source = format!("color=c={color}:s={width}x{height}");
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            &source,
+            "-vf",
+            "format=rgb24",
+            "-frames:v",
+            "1",
+            output_path.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .map_err(|error| format!("Could not create a solid background: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not create a solid background: {} [{}]",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
         ))
@@ -4995,11 +5161,12 @@ fn temporary_path(kind: &str) -> PathBuf {
 }
 
 fn temporary_file(kind: &str, extension: &str) -> PathBuf {
-    let millis = SystemTime::now()
+    let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock before Unix epoch")
-        .as_millis();
-    std::env::temp_dir().join(format!("pikscreen-{kind}-{millis}.{extension}"))
+        .as_nanos();
+    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("pikscreen-{kind}-{nanos}-{sequence}.{extension}"))
 }
 
 #[cfg(test)]
@@ -6444,6 +6611,40 @@ mod tests {
         let _ = std::fs::remove_file(assets.mask_path);
         let _ = std::fs::remove_file(assets.wallpaper_path);
         let _ = std::fs::remove_file(assets.shadow_path);
+    }
+
+    #[test]
+    fn solid_backgrounds_render_as_exact_black_and_white_pixels() {
+        for (style, expected) in [
+            (BackgroundStyle::PureBlack, 0_u8),
+            (BackgroundStyle::PureWhite, 255_u8),
+        ] {
+            let assets = recordly_frame_assets(style, None, 32, 18)
+                .expect("solid frame assets should be created");
+            let decoded = Command::new("ffmpeg")
+                .args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    assets.wallpaper_path.to_string_lossy().as_ref(),
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "pipe:1",
+                ])
+                .output()
+                .expect("solid wallpaper should be decodable");
+            assert!(decoded.status.success());
+            assert!(!decoded.stdout.is_empty());
+            assert!(decoded.stdout.iter().all(|channel| *channel == expected));
+            let _ = std::fs::remove_file(assets.mask_path);
+            let _ = std::fs::remove_file(assets.wallpaper_path);
+            let _ = std::fs::remove_file(assets.shadow_path);
+        }
     }
 
     #[test]

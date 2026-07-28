@@ -14,12 +14,12 @@
     "windows": [
       {
         "title": "PikScreen",
-        "width": 704,
-        "height": 80,
-        "minWidth": 704,
-        "minHeight": 80,
-        "maxWidth": 704,
-        "maxHeight": 80,
+        "width": 530,
+        "height": 68,
+        "minWidth": 530,
+        "minHeight": 68,
+        "maxWidth": 530,
+        "maxHeight": 68,
         "visible": false,
         "decorations": false,
         "transparent": true,

@@ -23,13 +23,42 @@ pub struct FinalVideoInfo {
     pub duration_ms: u64,
 }
 
-pub fn save_final_video(app: &AppHandle, source_path: PathBuf) -> Result<SaveResult, String> {
+pub fn save_final_video_to(
+    source_path: PathBuf,
+    destination: PathBuf,
+) -> Result<SaveResult, String> {
     validate_temporary_final_path(&source_path)?;
-    save_video(app, &source_path, true)
+    let destination = ensure_mp4_extension(destination);
+    move_temporary_final(&source_path, &destination)?;
+    Ok(SaveResult {
+        saved: true,
+        path: Some(destination.display().to_string()),
+    })
 }
 
-pub fn choose_editor_destination(app: &AppHandle) -> Result<Option<PathBuf>, String> {
-    choose_destination(app)
+pub async fn choose_editor_destination(app: AppHandle) -> Result<Option<PathBuf>, String> {
+    let default_name = default_export_file_name();
+    let dialog = app
+        .dialog()
+        .file()
+        .set_title("Save PikScreen recording")
+        .set_file_name(default_name)
+        .add_filter("MP4 video", &["mp4"]);
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    dialog.save_file(move |selection| {
+        let _ = sender.send(selection);
+    });
+    let selected = tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|error| format!("Save As picker task failed: {error}"))?
+        .map_err(|error| format!("Save As picker closed unexpectedly: {error}"))?;
+    let Some(destination) = selected else {
+        return Ok(None);
+    };
+    destination
+        .into_path()
+        .map(Some)
+        .map_err(|error| format!("Save As returned an unsupported destination: {error}"))
 }
 
 pub fn save_editor_video_to(
@@ -52,44 +81,6 @@ pub fn canceled_save_result() -> SaveResult {
         saved: false,
         path: None,
     }
-}
-
-fn save_video(
-    app: &AppHandle,
-    source_path: &Path,
-    remove_source: bool,
-) -> Result<SaveResult, String> {
-    let Some(destination) = choose_destination(app)? else {
-        return Ok(canceled_save_result());
-    };
-    let destination = ensure_mp4_extension(destination);
-    if remove_source {
-        move_temporary_final(source_path, &destination)?;
-    } else {
-        copy_video(source_path, &destination)?;
-    }
-    Ok(SaveResult {
-        saved: true,
-        path: Some(destination.display().to_string()),
-    })
-}
-
-fn choose_destination(app: &AppHandle) -> Result<Option<PathBuf>, String> {
-    let default_name = default_export_file_name();
-    let selected = app
-        .dialog()
-        .file()
-        .set_title("Save PikScreen recording")
-        .set_file_name(default_name)
-        .add_filter("MP4 video", &["mp4"])
-        .blocking_save_file();
-    let Some(destination) = selected else {
-        return Ok(None);
-    };
-    let destination = destination
-        .into_path()
-        .map_err(|error| format!("Save As returned an unsupported destination: {error}"))?;
-    Ok(Some(destination))
 }
 
 pub fn inspect_final_video(source_path: PathBuf) -> Result<FinalVideoInfo, String> {

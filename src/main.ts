@@ -14,30 +14,32 @@ const settingsWindow = currentWindowLabel === "settings" || requestedSurface ===
 const editorWindow = currentWindowLabel === "editor" || (!tauriAvailable && requestedEditorSession !== null);
 
 const backgroundPresets = [
-  ["tahoeDark", "Tahoe Dark", "tahoe-dark.jpg"],
-  ["tahoeLight", "Tahoe Light", "tahoe-light.jpg"],
-  ["midnight8", "Midnight", "midnight-8.jpg"],
-  ["sequoiaBlue", "Sequoia Blue", "sequoia-blue.jpg"],
-  ["sequoiaBlueOrange", "Sequoia Sunset", "sequoia-blue-orange.jpg"],
-  ["sonomaClouds", "Sonoma Clouds", "sonoma-clouds.jpg"],
-  ["sonomaDark", "Sonoma Dark", "sonoma-dark.jpg"],
-  ["sonomaLight", "Sonoma Light", "sonoma-light.jpg"],
-  ["sonomaEvening", "Sonoma Evening", "sonoma-evening.jpg"],
-  ["sonomaHorizon", "Sonoma Horizon", "sonoma-horizon.jpg"],
-  ["ventura", "Ventura", "ventura.jpg"],
-  ["venturaDark", "Ventura Dark", "ventura-dark.jpg"],
-  ["ipad17Dark", "iPad Dark", "ipad-17-dark.jpg"],
-  ["ipad17Light", "iPad Light", "ipad-17-light.jpg"],
-  ["glassmorphism3", "Glass 03", "glassmorphism-3.jpg"],
-  ["glassmorphism4", "Glass 04", "glassmorphism-4.jpg"],
-  ["energy19", "Energy 19", "energy-19.jpg"],
-  ["energy17", "Energy 17", "energy-17.jpg"],
-  ["wallpaper3", "Wallpaper 03", "wallpaper3.jpg"],
-  ["wallpaper4", "Wallpaper 04", "wallpaper4.jpg"],
-  ["wallpaper10", "Wallpaper 10", "wallpaper10.jpg"],
-  ["cityscape", "Cityscape", "cityscape.jpg"],
-  ["levels", "Levels", "levels.jpg"],
-  ["iridescent9", "Iridescent", "iridescent-9.jpg"],
+  ["pureBlack", "Pure Black", null, "#000000"],
+  ["pureWhite", "Pure White", null, "#ffffff"],
+  ["tahoeDark", "Tahoe Dark", "tahoe-dark.jpg", null],
+  ["tahoeLight", "Tahoe Light", "tahoe-light.jpg", null],
+  ["midnight8", "Midnight", "midnight-8.jpg", null],
+  ["sequoiaBlue", "Sequoia Blue", "sequoia-blue.jpg", null],
+  ["sequoiaBlueOrange", "Sequoia Sunset", "sequoia-blue-orange.jpg", null],
+  ["sonomaClouds", "Sonoma Clouds", "sonoma-clouds.jpg", null],
+  ["sonomaDark", "Sonoma Dark", "sonoma-dark.jpg", null],
+  ["sonomaLight", "Sonoma Light", "sonoma-light.jpg", null],
+  ["sonomaEvening", "Sonoma Evening", "sonoma-evening.jpg", null],
+  ["sonomaHorizon", "Sonoma Horizon", "sonoma-horizon.jpg", null],
+  ["ventura", "Ventura", "ventura.jpg", null],
+  ["venturaDark", "Ventura Dark", "ventura-dark.jpg", null],
+  ["ipad17Dark", "iPad Dark", "ipad-17-dark.jpg", null],
+  ["ipad17Light", "iPad Light", "ipad-17-light.jpg", null],
+  ["glassmorphism3", "Glass 03", "glassmorphism-3.jpg", null],
+  ["glassmorphism4", "Glass 04", "glassmorphism-4.jpg", null],
+  ["energy19", "Energy 19", "energy-19.jpg", null],
+  ["energy17", "Energy 17", "energy-17.jpg", null],
+  ["wallpaper3", "Wallpaper 03", "wallpaper3.jpg", null],
+  ["wallpaper4", "Wallpaper 04", "wallpaper4.jpg", null],
+  ["wallpaper10", "Wallpaper 10", "wallpaper10.jpg", null],
+  ["cityscape", "Cityscape", "cityscape.jpg", null],
+  ["levels", "Levels", "levels.jpg", null],
+  ["iridescent9", "Iridescent", "iridescent-9.jpg", null],
 ] as const;
 
 function mountBackgroundGallery(
@@ -46,12 +48,18 @@ function mountBackgroundGallery(
   onSelect: (value: RecordingSettings["background"]) => void,
 ) {
   if (!container) return () => {};
-  const buttons = backgroundPresets.map(([value, label, file]) => {
+  const buttons = backgroundPresets.map(([value, label, file, color]) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "wallpaper-tile";
     button.dataset.background = value;
-    button.style.backgroundImage = `url("${new URL(`../src-tauri/assets/wallpapers/${file}`, import.meta.url).href}")`;
+    if (file) {
+      button.style.backgroundImage = `url("${new URL(`../src-tauri/assets/wallpapers/${file}`, import.meta.url).href}")`;
+    } else {
+      button.style.backgroundImage = "none";
+      button.style.backgroundColor = color;
+      button.classList.add("solid-color");
+    }
     button.title = label;
     const text = document.createElement("span");
     text.textContent = label;
@@ -83,7 +91,7 @@ type PreviewSettings = { hideBottomBar: boolean; barHeightCorrection: number };
 type RecordingSettings = {
   fps: number;
   quality: "balanced" | "high" | "ultra";
-  background: "tahoeLight" | "tahoeDark" | "midnight8" | "ipad17Dark" | "ipad17Light" | "sequoiaBlue" | "sequoiaBlueOrange" | "ventura" | "sonomaClouds" | "sonomaLight" | "sonomaDark" | "glassmorphism3" | "glassmorphism4" | "energy19" | "wallpaper3" | "wallpaper4" | "cityscape" | "levels" | "wallpaper10" | "venturaDark" | "sonomaEvening" | "sonomaHorizon" | "iridescent9" | "energy17";
+  background: "pureBlack" | "pureWhite" | "tahoeLight" | "tahoeDark" | "midnight8" | "ipad17Dark" | "ipad17Light" | "sequoiaBlue" | "sequoiaBlueOrange" | "ventura" | "sonomaClouds" | "sonomaLight" | "sonomaDark" | "glassmorphism3" | "glassmorphism4" | "energy19" | "wallpaper3" | "wallpaper4" | "cityscape" | "levels" | "wallpaper10" | "venturaDark" | "sonomaEvening" | "sonomaHorizon" | "iridescent9" | "energy17";
   customBackgroundPath: string | null;
   cursorVisible: boolean;
   customCursorPath: string | null;
@@ -242,8 +250,11 @@ const buildPreviewZoomEvents = (markers: ZoomMarker[], defaultScale: number) => 
   return events;
 };
 const previewCameraAt = (events: PreviewZoomEvent[], timeMs: number) => {
-  const active = [...events].reverse().find((event) => timeMs >= event.startMs && timeMs < event.endMs);
-  return active ? cameraForEvent(active, timeMs) : identityCamera();
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (timeMs >= event.startMs && timeMs < event.endMs) return cameraForEvent(event, timeMs);
+  }
+  return identityCamera();
 };
 const createPreviewSpring = (value: number): PreviewSpringState => ({
   value,
@@ -344,36 +355,56 @@ const buildPreviewCameraTrack = (
   durationMs: number,
   fps = 120,
 ): PreviewCameraFrame[] => {
-  const scale = createPreviewSpring(1);
-  const cropX = createPreviewSpring(0);
-  const cropY = createPreviewSpring(0);
-  const frameCount = Math.floor(durationMs * fps / 1_000) + 2;
+  if (events.length === 0) return [{ timeMs: 0, camera: identityCamera() }];
   const frames: PreviewCameraFrame[] = [];
-  let previousTimeMs: number | null = null;
-  for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-    const timeMs = Math.floor(frameIndex * 1_000 / fps);
-    const target = previewCameraAt(events, timeMs);
-    const deltaMs = previousTimeMs === null ? 1_000 / fps : timeMs - previousTimeMs;
-    previousTimeMs = timeMs;
-    frames.push({
-      timeMs,
-      camera: {
-        scale: stepPreviewSpring(scale, target.scale, deltaMs),
-        cropX: stepPreviewSpring(cropX, target.cropX, deltaMs),
-        cropY: stepPreviewSpring(cropY, target.cropY, deltaMs),
-        hideCursor: target.hideCursor,
-      },
-    });
+  const frameDurationMs = 1_000 / fps;
+  const groups: Array<{ startMs: number; endMs: number }> = [];
+  for (const event of events) {
+    const startMs = Math.max(0, event.startMs - frameDurationMs * 2);
+    const endMs = Math.min(durationMs, event.endMs + 1_500);
+    const previous = groups[groups.length - 1];
+    if (previous && startMs <= previous.endMs) previous.endMs = Math.max(previous.endMs, endMs);
+    else groups.push({ startMs, endMs });
+  }
+  for (const group of groups) {
+    const scale = createPreviewSpring(1);
+    const cropX = createPreviewSpring(0);
+    const cropY = createPreviewSpring(0);
+    const frameCount = Math.ceil((group.endMs - group.startMs) * fps / 1_000) + 1;
+    let previousTimeMs: number | null = null;
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const timeMs = Math.min(group.endMs, group.startMs + frameIndex * frameDurationMs);
+      const target = previewCameraAt(events, timeMs);
+      const deltaMs = previousTimeMs === null ? frameDurationMs : timeMs - previousTimeMs;
+      previousTimeMs = timeMs;
+      frames.push({
+        timeMs,
+        camera: {
+          scale: stepPreviewSpring(scale, target.scale, deltaMs),
+          cropX: stepPreviewSpring(cropX, target.cropX, deltaMs),
+          cropY: stepPreviewSpring(cropY, target.cropY, deltaMs),
+          hideCursor: target.hideCursor,
+        },
+      });
+    }
   }
   return frames;
 };
 const cameraFromPreviewTrack = (frames: PreviewCameraFrame[], timeMs: number): PreviewCamera => {
   if (frames.length === 0) return identityCamera();
-  const framePosition = Math.max(0, timeMs) * 120 / 1_000;
-  const leftIndex = Math.min(frames.length - 1, Math.floor(framePosition));
+  if (timeMs < frames[0].timeMs || timeMs >= frames[frames.length - 1].timeMs) return identityCamera();
+  let low = 0;
+  let high = frames.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (frames[middle].timeMs <= timeMs) low = middle;
+    else high = middle - 1;
+  }
+  const leftIndex = low;
   const rightIndex = Math.min(frames.length - 1, leftIndex + 1);
   const left = frames[leftIndex];
   const right = frames[rightIndex];
+  if (right.timeMs - left.timeMs > 50) return identityCamera();
   const span = Math.max(1, right.timeMs - left.timeMs);
   const progress = Math.max(0, Math.min(1, (timeMs - left.timeMs) / span));
   return {
@@ -384,9 +415,14 @@ const cameraFromPreviewTrack = (frames: PreviewCameraFrame[], timeMs: number): P
   };
 };
 
-const backgroundPreviewUrl = (background: RecordingSettings["background"]) => {
+const backgroundPreview = (background: RecordingSettings["background"]) => {
   const preset = backgroundPresets.find(([value]) => value === background);
-  return preset ? new URL(`../src-tauri/assets/wallpapers/${preset[2]}`, import.meta.url).href : "";
+  if (!preset) return { image: "", color: "#10131a" };
+  const [, , file, color] = preset;
+  return {
+    image: file ? new URL(`../src-tauri/assets/wallpapers/${file}`, import.meta.url).href : "",
+    color: color ?? "#10131a",
+  };
 };
 
 const tahoePreviewCursor = (kind: string) => {
@@ -430,6 +466,25 @@ const cursorSampleAt = (samples: CursorSample[], timeMs: number) => {
   };
 };
 
+const clickSamplesAt = (samples: ClickSample[], timeMs: number, lifetimeMs = 520) => {
+  if (samples.length === 0) return [];
+  const windowStart = timeMs - lifetimeMs;
+  let low = 0;
+  let high = samples.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (samples[middle].timeMs < windowStart) low = middle + 1;
+    else high = middle;
+  }
+  const active: ClickSample[] = [];
+  for (let index = low; index < samples.length; index += 1) {
+    const sample = samples[index];
+    if (sample.timeMs > timeMs) break;
+    active.push(sample);
+  }
+  return active;
+};
+
 async function setupEditor() {
   document.querySelector<HTMLElement>("#editor-shell")?.removeAttribute("hidden");
   const sessionId = new URLSearchParams(window.location.search).get("editor");
@@ -453,7 +508,10 @@ async function setupEditor() {
   const playheadOutput = query<HTMLOutputElement>("#editor-playhead-output");
   const playheadLine = query<HTMLElement>("#editor-playhead-line");
   const markerLane = query<HTMLElement>("#editor-marker-lane");
+  const timelineGrid = query<HTMLElement>(".timeline-grid");
   const clipRegion = query<HTMLElement>("#editor-clip-region");
+  const audioTrackLabel = query<HTMLElement>("#editor-audio-track-label");
+  const audioLane = query<HTMLElement>("#editor-audio-lane");
   const rulerLabels = query<HTMLElement>("#editor-ruler-labels");
   const focusPreview = query<HTMLElement>("#editor-focus-preview");
   const selectionTitle = query<HTMLElement>("#editor-selection-title");
@@ -467,6 +525,7 @@ async function setupEditor() {
   const markerDurationInput = query<HTMLInputElement>("#editor-marker-duration");
   const markerHideCursor = query<HTMLInputElement>("#editor-marker-hide-cursor");
   const addMarker = query<HTMLButtonElement>("#editor-add-marker");
+  const addOrangeMarker = query<HTMLButtonElement>("#editor-add-orange-marker");
   const addMarkerToolbar = query<HTMLButtonElement>("#editor-add-marker-toolbar");
   const deleteMarker = query<HTMLButtonElement>("#editor-delete-marker");
   const undo = query<HTMLButtonElement>("#editor-undo");
@@ -484,6 +543,7 @@ async function setupEditor() {
   const skipBack = query<HTMLButtonElement>("#editor-skip-back");
   const skipForward = query<HTMLButtonElement>("#editor-skip-forward");
   const volume = query<HTMLButtonElement>("#editor-volume");
+  const previewVolume = query<HTMLInputElement>("#editor-preview-volume");
   const background = query<HTMLSelectElement>("#editor-background");
   const customBackground = query<HTMLButtonElement>("#editor-custom-background");
   const customBackgroundName = query<HTMLElement>("#editor-custom-background-name");
@@ -493,6 +553,12 @@ async function setupEditor() {
   const cursorSmoothing = query<HTMLInputElement>("#editor-cursor-smoothing");
   const cursorSmoothingOutput = query<HTMLOutputElement>("#editor-cursor-smoothing-output");
   const clickEffects = query<HTMLInputElement>("#editor-click-effects");
+  const editorSystemAudioEnabled = query<HTMLInputElement>("#editor-system-audio-enabled");
+  const editorMicrophoneEnabled = query<HTMLInputElement>("#editor-microphone-enabled");
+  const editorSystemAudioVolume = query<HTMLInputElement>("#editor-system-audio-volume");
+  const editorMicrophoneVolume = query<HTMLInputElement>("#editor-microphone-volume");
+  const editorSystemAudioVolumeOutput = query<HTMLOutputElement>("#editor-system-audio-volume-output");
+  const editorMicrophoneVolumeOutput = query<HTMLOutputElement>("#editor-microphone-volume-output");
   const customCursor = query<HTMLButtonElement>("#editor-custom-cursor");
   const customCursorName = query<HTMLElement>("#editor-custom-cursor-name");
   const webcamEnabled = query<HTMLInputElement>("#editor-webcam-enabled");
@@ -508,6 +574,7 @@ async function setupEditor() {
   const aspectLabel = query<HTMLElement>("#editor-aspect-label");
   const exportFps = query<HTMLElement>("#editor-export-fps");
   const exportQuality = query<HTMLElement>("#editor-export-quality");
+  const previewColumn = query<HTMLElement>(".editor-preview-column");
   const previewStage = query<HTMLElement>(".recordly-preview-stage");
   const toolButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-editor-tool]")];
   const toolPanels = [...document.querySelectorAll<HTMLElement>("[data-editor-panel]")];
@@ -520,53 +587,110 @@ async function setupEditor() {
   let busy = false;
   let syncEditorBackgroundGallery = () => {};
   let liveFrameRequest = 0;
+  let videoFrameRequest = 0;
   let smoothedPreviewCursor: { x: number; y: number } | null = null;
   let smoothedPreviewCursorTime = -1;
   let smoothedPreviewCursorAmount = -1;
-  let previewCameraTrackKey = "";
   let previewCameraTrack: PreviewCameraFrame[] = [];
+  let previewCameraTrackDirty = true;
+  let previewFrameHeight = 0;
+  let lastSidecarSyncAt = 0;
+  let hiddenAt: number | null = null;
+  let previewNeedsRefresh = false;
+  let previewRefresh: Promise<void> | null = null;
+  let editorDisposed = false;
+  let previewVolumeLevel = 1;
+  let stopProcessingProgress: (() => void) | null = null;
+  const clickPulsePool: HTMLSpanElement[] = [];
   const publishedAssets = new Map<string, string>();
   const history: EditorSnapshot[] = [];
   const future: EditorSnapshot[] = [];
 
   const layoutPreviewCanvas = () => {
     if (!sessionReady || !session.width || !session.height) return;
-    const bounds = previewStage.getBoundingClientRect();
+    const bounds = previewColumn.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
+    const availableWidth = Math.max(1, bounds.width - 28);
+    const availableHeight = Math.max(1, Math.min(bounds.height - 124, window.innerHeight * 0.60, 620));
     const aspect = session.width / session.height;
-    let width = bounds.width;
+    let width = availableWidth;
     let height = width / aspect;
-    if (height > bounds.height) {
-      height = bounds.height;
+    if (height > availableHeight) {
+      height = availableHeight;
       width = height * aspect;
     }
-    sceneViewport.style.width = `${Math.max(1, Math.floor(width))}px`;
-    sceneViewport.style.height = `${Math.max(1, Math.floor(height))}px`;
+    const pixelWidth = Math.max(1, Math.floor(width));
+    const pixelHeight = Math.max(1, Math.floor(height));
+    previewStage.style.width = `${pixelWidth}px`;
+    previewStage.style.height = `${pixelHeight}px`;
+    sceneViewport.style.width = `${pixelWidth}px`;
+    sceneViewport.style.height = `${pixelHeight}px`;
+    previewFrameHeight = Math.max(1, Math.floor(pixelHeight * 0.92));
   };
   const previewAssetUrl = (path: string | null, fallback: string | null) =>
     path ? publishedAssets.get(path) ?? fallback : null;
-  const syncSidecarTime = () => {
+  const syncSidecarTime = (force = false) => {
+    const now = performance.now();
+    if (!force && now - lastSidecarSyncAt < 500) return;
+    lastSidecarSyncAt = now;
     for (const sidecar of [audioPreview, webcamPreview]) {
       if (!sidecar.src || !Number.isFinite(video.currentTime)) continue;
-      if (Math.abs(sidecar.currentTime - video.currentTime) > 0.12) {
+      const drift = sidecar.currentTime - video.currentTime;
+      if (force || Math.abs(drift) > 0.45) {
         sidecar.currentTime = video.currentTime;
+        sidecar.playbackRate = 1;
+      } else if (!video.paused && Math.abs(drift) > 0.06) {
+        sidecar.playbackRate = Math.max(0.97, Math.min(1.03, 1 - drift * 0.08));
+      } else if (Math.abs(sidecar.playbackRate - 1) > 0.001) {
+        sidecar.playbackRate = 1;
       }
     }
   };
   const cameraAtEditorTime = (timeMs: number) => {
-    const nextKey = JSON.stringify([
-      session.durationMs,
-      session.settings.zoomScale,
-      session.markers,
-    ]);
-    if (nextKey !== previewCameraTrackKey) {
-      previewCameraTrackKey = nextKey;
+    if (previewCameraTrackDirty) {
       previewCameraTrack = buildPreviewCameraTrack(
         buildPreviewZoomEvents(session.markers, session.settings.zoomScale),
         session.durationMs,
       );
+      previewCameraTrackDirty = false;
     }
     return cameraFromPreviewTrack(previewCameraTrack, timeMs);
+  };
+  const invalidatePreviewCameraTrack = () => {
+    previewCameraTrackDirty = true;
+  };
+  const syncStaticPreview = () => {
+    if (!sessionReady) return;
+    video.style.width = "100%";
+    video.style.height = "100%";
+    video.style.left = "0";
+    video.style.top = "0";
+
+    const customBackgroundUrl = previewAssetUrl(
+      session.settings.customBackgroundPath,
+      session.customBackgroundUrl,
+    );
+    const selectedBackground = backgroundPreview(session.settings.background);
+    sceneCanvas.style.backgroundImage = customBackgroundUrl
+      ? `url("${customBackgroundUrl}")`
+      : selectedBackground.image
+        ? `url("${selectedBackground.image}")`
+        : "none";
+    sceneCanvas.style.backgroundColor = customBackgroundUrl
+      ? "#10131a"
+      : selectedBackground.color;
+
+    const showWebcam = Boolean(session.hasWebcam && session.webcamUrl && session.settings.webcam.enabled);
+    webcamPreview.hidden = !showWebcam;
+    if (showWebcam) {
+      const webcam = session.settings.webcam;
+      webcamPreview.style.width = `${Math.max(10, Math.min(100, webcam.sizePercent))}%`;
+      webcamPreview.style.right = `${webcam.margin}px`;
+      webcamPreview.style.bottom = `${webcam.margin}px`;
+      webcamPreview.style.borderRadius = `${webcam.roundness}px`;
+      webcamPreview.style.boxShadow = `0 14px 34px rgb(0 0 0 / ${0.48 * webcam.shadow})`;
+      webcamPreview.style.transform = webcam.mirror ? "scaleX(-1)" : "none";
+    }
   };
   const updateLivePreview = (timeMs = Math.round(video.currentTime * 1000 || Number(playhead.value || 0))) => {
     if (!sessionReady) return;
@@ -588,16 +712,6 @@ async function setupEditor() {
     const cameraY = -sceneCropY * camera.scale * 100;
     sceneCanvas.style.transform =
       `translate3d(${cameraX}%, ${cameraY}%, 0) scale(${camera.scale})`;
-    video.style.width = "100%";
-    video.style.height = "100%";
-    video.style.left = "0";
-    video.style.top = "0";
-
-    const customBackgroundUrl = previewAssetUrl(
-      session.settings.customBackgroundPath,
-      session.customBackgroundUrl,
-    );
-    sceneCanvas.style.backgroundImage = `url("${customBackgroundUrl ?? backgroundPreviewUrl(session.settings.background)}")`;
 
     const rawCursorSample = session.syntheticCursor
       ? cursorSampleAt(session.cursorSamples, timeMs)
@@ -638,7 +752,7 @@ async function setupEditor() {
       if (liveCursor.src !== cursorAsset.url) liveCursor.src = cursorAsset.url;
       liveCursor.style.left = `${cursorSample.x * 100}%`;
       liveCursor.style.top = `${cursorSample.y * 100}%`;
-      liveCursor.style.height = `${Math.max(18, cameraFrame.clientHeight * 0.075 * session.settings.cursorSize / 100)}px`;
+      liveCursor.style.height = `${Math.max(18, previewFrameHeight * 0.075 * session.settings.cursorSize / 100)}px`;
       liveCursor.style.transform = `translate(-${cursorAsset.hotspotX}%, -${cursorAsset.hotspotY}%)`;
       liveCursor.style.opacity = "1";
     } else {
@@ -646,55 +760,73 @@ async function setupEditor() {
     }
 
     const activeClicks = session.settings.clickEffectsEnabled
-      ? session.clickSamples.filter((sample) => timeMs >= sample.timeMs && timeMs - sample.timeMs <= 520)
+      ? clickSamplesAt(session.clickSamples, timeMs)
       : [];
-    clickLayer.replaceChildren(...activeClicks.map((sample) => {
+    while (clickPulsePool.length < activeClicks.length) {
       const pulse = document.createElement("span");
+      clickPulsePool.push(pulse);
+      clickLayer.append(pulse);
+    }
+    clickPulsePool.forEach((pulse, index) => {
+      const sample = activeClicks[index];
+      if (!sample) {
+        pulse.hidden = true;
+        return;
+      }
+      pulse.hidden = false;
       pulse.className = `editor-click-pulse${sample.primary ? "" : " secondary"}`;
       const progress = Math.max(0, Math.min(1, (timeMs - sample.timeMs) / 520));
       pulse.style.left = `${sample.x * 100}%`;
       pulse.style.top = `${sample.y * 100}%`;
       pulse.style.opacity = String((1 - progress) * 0.92);
       pulse.style.transform = `translate(-50%, -50%) scale(${(0.38 + progress * 1.35) * camera.scale})`;
-      return pulse;
-    }));
-
-    const showWebcam = Boolean(session.hasWebcam && session.webcamUrl && session.settings.webcam.enabled);
-    webcamPreview.hidden = !showWebcam;
-    if (showWebcam) {
-      const webcam = session.settings.webcam;
-      webcamPreview.style.width = `${Math.max(10, Math.min(100, webcam.sizePercent))}%`;
-      webcamPreview.style.right = `${webcam.margin}px`;
-      webcamPreview.style.bottom = `${webcam.margin}px`;
-      webcamPreview.style.borderRadius = `${webcam.roundness}px`;
-      webcamPreview.style.boxShadow = `0 14px 34px rgb(0 0 0 / ${0.48 * webcam.shadow})`;
-      webcamPreview.style.transform = webcam.mirror ? "scaleX(-1)" : "none";
-    }
+    });
   };
   const stopLiveFrames = () => {
     if (liveFrameRequest) cancelAnimationFrame(liveFrameRequest);
+    if (videoFrameRequest && typeof video.cancelVideoFrameCallback === "function") {
+      video.cancelVideoFrameCallback(videoFrameRequest);
+    }
     liveFrameRequest = 0;
+    videoFrameRequest = 0;
   };
   const runLiveFrames = () => {
     stopLiveFrames();
     const frame = () => {
+      if (editorDisposed || video.paused || video.ended || document.hidden) {
+        stopLiveFrames();
+        return;
+      }
       if (video.currentTime * 1000 >= session.trimEndMs) {
         video.pause();
         video.currentTime = session.trimEndMs / 1000;
+        return;
       }
       playhead.value = String(Math.round(video.currentTime * 1000));
       updatePlayhead();
       updateLivePreview();
       syncSidecarTime();
-      if (!video.paused && !video.ended) liveFrameRequest = requestAnimationFrame(frame);
-      else liveFrameRequest = 0;
+      if (typeof video.requestVideoFrameCallback === "function") {
+        videoFrameRequest = video.requestVideoFrameCallback(() => {
+          videoFrameRequest = 0;
+          frame();
+        });
+      } else {
+        liveFrameRequest = requestAnimationFrame(() => {
+          liveFrameRequest = 0;
+          frame();
+        });
+      }
     };
-    liveFrameRequest = requestAnimationFrame(frame);
+    frame();
   };
-  new ResizeObserver(() => {
+  const previewResizeObserver = new ResizeObserver(() => {
     layoutPreviewCanvas();
     updateLivePreview();
-  }).observe(previewStage);
+  });
+  previewResizeObserver.observe(previewColumn);
+  const timelineResizeObserver = new ResizeObserver(() => syncTimeline());
+  timelineResizeObserver.observe(timelineGrid);
   const snapshot = (): EditorSnapshot => clone({
     trimStartMs: session.trimStartMs,
     trimEndMs: session.trimEndMs,
@@ -716,6 +848,7 @@ async function setupEditor() {
     session.trimEndMs = next.trimEndMs;
     session.markers = clone(next.markers);
     session.settings = clone(next.settings);
+    invalidatePreviewCameraTrack();
     selectedMarker = selectedMarker === null || session.markers.length === 0
       ? null
       : Math.min(selectedMarker, session.markers.length - 1);
@@ -729,6 +862,7 @@ async function setupEditor() {
     discard.disabled = next;
     exportButton.disabled = next;
     addMarker.disabled = next;
+    addOrangeMarker.disabled = next;
     addMarkerToolbar.disabled = next;
     deleteMarker.disabled = next || selectedMarker === null;
     undo.disabled = next || history.length === 0;
@@ -758,12 +892,19 @@ async function setupEditor() {
     if (marker) {
       playhead.value = String(marker.timeMs);
       video.currentTime = marker.timeMs / 1000;
-      syncSidecarTime();
+      syncSidecarTime(true);
       updateLivePreview(marker.timeMs);
       activateTool("zoom");
     }
     syncMarkerPanel();
     syncTimeline();
+  };
+  const syncPreviewVolume = () => {
+    const level = Math.max(0, Math.min(1, previewVolumeLevel));
+    video.volume = level;
+    audioPreview.volume = level;
+    volume.classList.toggle("muted", video.muted || level === 0);
+    volume.setAttribute("aria-label", video.muted || level === 0 ? "Unmute preview" : "Mute preview");
   };
   const syncMarkerPanel = () => {
     const marker = selected();
@@ -789,7 +930,11 @@ async function setupEditor() {
     const now = Number(playhead.value);
     const ratio = session.durationMs ? now / session.durationMs : 0;
     playheadOutput.value = formatElapsed(now);
-    playheadLine.style.left = `calc(96px + (100% - 96px) * ${ratio})`;
+    const laneLeft = markerLane.offsetLeft;
+    const laneWidth = markerLane.clientWidth;
+    playhead.style.left = `${laneLeft}px`;
+    playhead.style.width = `${laneWidth}px`;
+    playheadLine.style.left = `${laneLeft + laneWidth * ratio}px`;
   };
   const beginTimelineDrag = (event: PointerEvent, marker: ZoomMarker, mode: "move" | "start" | "end") => {
     event.preventDefault();
@@ -812,6 +957,7 @@ async function setupEditor() {
       } else {
         setMarkerDuration(marker, Math.max(1_000, Math.min(session.durationMs, originalEnd + delta) - marker.timeMs));
       }
+      invalidatePreviewCameraTrack();
       playhead.value = String(marker.timeMs);
       markDirty();
       syncMarkerPanel();
@@ -829,6 +975,10 @@ async function setupEditor() {
     window.addEventListener("pointerup", end, { once: true });
   };
   const syncTimeline = () => {
+    const hasAudioTrack = Boolean(session.audioUrl);
+    audioTrackLabel.hidden = !hasAudioTrack;
+    audioLane.hidden = !hasAudioTrack;
+    timelineGrid.classList.toggle("audio-present", hasAudioTrack);
     updatePlayhead();
     markerLane.replaceChildren();
     session.markers.forEach((marker, index) => {
@@ -839,6 +989,7 @@ async function setupEditor() {
       region.type = "button";
       region.className = "recordly-zoom-region";
       region.classList.toggle("selected", index === selectedMarker);
+      region.classList.toggle("cursor-hidden", marker.hideCursor);
       region.style.left = `${start}%`;
       region.style.width = `${width}%`;
       region.innerHTML = `<i class="recordly-region-handle start"></i><span>Zoom ${index + 1}</span><i class="recordly-region-handle end"></i>`;
@@ -857,7 +1008,6 @@ async function setupEditor() {
     const trimWidth = (session.trimEndMs - session.trimStartMs) / session.durationMs * 100;
     clipRegion.style.left = `${trimLeft}%`;
     clipRegion.style.width = `${trimWidth}%`;
-    updateLivePreview();
   };
   const syncSettings = () => {
     background.value = session.settings.background;
@@ -869,6 +1019,12 @@ async function setupEditor() {
     cursorSmoothing.value = String(session.settings.cursorSmoothing);
     cursorSmoothingOutput.value = `${session.settings.cursorSmoothing}%`;
     clickEffects.checked = session.settings.clickEffectsEnabled;
+    editorSystemAudioEnabled.checked = session.settings.audio.systemEnabled;
+    editorMicrophoneEnabled.checked = session.settings.audio.microphoneEnabled;
+    editorSystemAudioVolume.value = String(Math.round(session.settings.audio.systemVolume * 100));
+    editorMicrophoneVolume.value = String(Math.round(session.settings.audio.microphoneVolume * 100));
+    editorSystemAudioVolumeOutput.value = `${editorSystemAudioVolume.value}%`;
+    editorMicrophoneVolumeOutput.value = `${editorMicrophoneVolume.value}%`;
     customCursorName.textContent = session.settings.customCursorPath?.split("/").pop() ?? "Tahoe cursor set";
     webcamEnabled.checked = session.settings.webcam.enabled && session.hasWebcam;
     webcamMirror.checked = session.settings.webcam.mirror;
@@ -881,7 +1037,7 @@ async function setupEditor() {
     webcamReact.checked = session.settings.webcam.reactToZoom;
     exportFps.textContent = `${session.settings.fps} FPS`;
     exportQuality.textContent = session.settings.quality[0].toUpperCase() + session.settings.quality.slice(1);
-    updateLivePreview();
+    syncStaticPreview();
   };
   const syncAll = () => {
     durationOutput.value = formatElapsed(session.durationMs);
@@ -890,6 +1046,7 @@ async function setupEditor() {
     syncSettings();
     syncMarkerPanel();
     syncTimeline();
+    syncPreviewVolume();
     updateLivePreview();
   };
   const syncSession = (next: EditorSession, reloadVideo = true) => {
@@ -899,8 +1056,9 @@ async function setupEditor() {
     aspectLabel.innerHTML = `<i class="ph ph-monitor"></i> ${next.width} × ${next.height}`;
     smoothedPreviewCursor = null;
     smoothedPreviewCursorTime = -1;
-    previewCameraTrackKey = "";
     previewCameraTrack = [];
+    previewCameraTrackDirty = true;
+    previewNeedsRefresh = false;
     if (next.settings.customBackgroundPath && next.customBackgroundUrl) {
       publishedAssets.set(next.settings.customBackgroundPath, next.customBackgroundUrl);
     }
@@ -914,7 +1072,7 @@ async function setupEditor() {
       video.src = next.videoUrl;
       video.addEventListener("loadedmetadata", () => {
         video.currentTime = Math.min(resumeAt, video.duration || resumeAt);
-        syncSidecarTime();
+        syncSidecarTime(true);
         updateLivePreview();
       }, { once: true });
       video.load();
@@ -940,9 +1098,90 @@ async function setupEditor() {
     layoutPreviewCanvas();
     syncAll();
   };
-  const mutate = (change: () => void) => {
+  const waitForMediaState = (
+    media: HTMLMediaElement,
+    minimumReadyState: number,
+    events: string[],
+    timeoutMs = 6_000,
+  ) => new Promise<void>((resolve, reject) => {
+    if (media.readyState >= minimumReadyState) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      events.forEach((event) => media.removeEventListener(event, ready));
+      media.removeEventListener("error", failed);
+    };
+    const ready = () => {
+      if (settled || media.readyState < minimumReadyState) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const failed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(`Media error ${media.error?.code ?? "unknown"}`));
+    };
+    const timeout = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Preview refresh timed out"));
+    }, timeoutMs);
+    events.forEach((event) => media.addEventListener(event, ready));
+    media.addEventListener("error", failed, { once: true });
+  });
+  const reloadMediaAt = async (media: HTMLMediaElement, source: string, atSeconds: number) => {
+    media.pause();
+    media.removeAttribute("src");
+    media.load();
+    media.src = source;
+    media.load();
+    await waitForMediaState(media, HTMLMediaElement.HAVE_METADATA, ["loadedmetadata"]);
+    media.currentTime = Math.max(0, Math.min(atSeconds, media.duration || atSeconds));
+    await waitForMediaState(media, HTMLMediaElement.HAVE_CURRENT_DATA, ["loadeddata", "canplay", "seeked"]);
+  };
+  const refreshIdlePreview = () => {
+    if (previewRefresh) return previewRefresh;
+    previewRefresh = (async () => {
+      const resumeAt = Number.isFinite(video.currentTime)
+        ? video.currentTime
+        : Number(playhead.value || session.trimStartMs) / 1000;
+      const muted = video.muted;
+      videoStatus.textContent = "Refreshing preview…";
+      stopLiveFrames();
+      audioPreview.pause();
+      webcamPreview.pause();
+      await reloadMediaAt(video, session.videoUrl, resumeAt);
+      const sidecars: Promise<void>[] = [];
+      if (session.audioUrl) sidecars.push(reloadMediaAt(audioPreview, session.audioUrl, resumeAt));
+      if (session.webcamUrl) sidecars.push(reloadMediaAt(webcamPreview, session.webcamUrl, resumeAt));
+      await Promise.allSettled(sidecars);
+      video.muted = muted;
+      audioPreview.muted = muted;
+      playhead.value = String(Math.round(resumeAt * 1000));
+      updatePlayhead();
+      syncSidecarTime(true);
+      updateLivePreview();
+      previewNeedsRefresh = false;
+      videoStatus.textContent = "Preview";
+    })().finally(() => {
+      previewRefresh = null;
+    });
+    return previewRefresh;
+  };
+  const ensurePreviewReady = async () => {
+    const stale = previewNeedsRefresh || Boolean(video.error);
+    if (stale) await refreshIdlePreview();
+  };
+  const mutate = (change: () => void, cameraChanged = false) => {
     pushHistory();
     change();
+    if (cameraChanged) invalidatePreviewCameraTrack();
     markDirty();
     syncAll();
   };
@@ -965,31 +1204,33 @@ async function setupEditor() {
     history.push(snapshot());
     applySnapshot(next);
   });
-  const createMarker = () => {
+  const createMarker = (hideCursor = false) => {
     const marker: ZoomMarker = {
       timeMs: Number(playhead.value),
       x: 0.5,
       y: 0.5,
       targetScale: session.settings.zoomScale,
       heldUntilMs: null,
-      hideCursor: false,
+      hideCursor,
     };
     pushHistory();
     session.markers.push(marker);
     session.markers.sort((left, right) => left.timeMs - right.timeMs);
+    invalidatePreviewCameraTrack();
     selectedMarker = session.markers.indexOf(marker);
     markDirty();
     activateTool("zoom");
     syncAll();
   };
-  addMarker.addEventListener("click", createMarker);
-  addMarkerToolbar.addEventListener("click", createMarker);
+  addMarker.addEventListener("click", () => createMarker(false));
+  addOrangeMarker.addEventListener("click", () => createMarker(true));
+  addMarkerToolbar.addEventListener("click", () => createMarker(false));
   deleteMarker.addEventListener("click", () => {
     if (selectedMarker === null) return;
     mutate(() => {
       session.markers.splice(selectedMarker!, 1);
       selectedMarker = null;
-    });
+    }, true);
   });
 
   for (const input of [markerDepth, markerX, markerY]) {
@@ -999,6 +1240,7 @@ async function setupEditor() {
     const marker = selected();
     if (!marker) return;
     marker.targetScale = Number(markerDepth.value) / 100;
+    invalidatePreviewCameraTrack();
     markDirty();
     syncMarkerPanel();
     syncTimeline();
@@ -1008,6 +1250,7 @@ async function setupEditor() {
     const marker = selected();
     if (!marker) return;
     marker.x = Number(markerX.value) / 100;
+    invalidatePreviewCameraTrack();
     markDirty();
     syncMarkerPanel();
     updateLivePreview();
@@ -1016,6 +1259,7 @@ async function setupEditor() {
     const marker = selected();
     if (!marker) return;
     marker.y = Number(markerY.value) / 100;
+    invalidatePreviewCameraTrack();
     markDirty();
     syncMarkerPanel();
     updateLivePreview();
@@ -1025,13 +1269,14 @@ async function setupEditor() {
     const marker = selected();
     if (!marker) return;
     setMarkerDuration(marker, Number(markerDurationInput.value) * 1000);
+    invalidatePreviewCameraTrack();
     markDirty();
     syncAll();
   });
   markerHideCursor.addEventListener("change", () => mutate(() => {
     const marker = selected();
     if (marker) marker.hideCursor = markerHideCursor.checked;
-  }));
+  }, true));
 
   const bindRange = (input: HTMLInputElement, apply: (value: number) => void) => {
     input.addEventListener("pointerdown", pushHistory, { passive: true });
@@ -1047,6 +1292,18 @@ async function setupEditor() {
   }));
   cursorVisible.addEventListener("change", () => mutate(() => { session.settings.cursorVisible = cursorVisible.checked; }));
   clickEffects.addEventListener("change", () => mutate(() => { session.settings.clickEffectsEnabled = clickEffects.checked; }));
+  editorSystemAudioEnabled.addEventListener("change", () => mutate(() => {
+    session.settings.audio.systemEnabled = editorSystemAudioEnabled.checked;
+  }));
+  editorMicrophoneEnabled.addEventListener("change", () => mutate(() => {
+    session.settings.audio.microphoneEnabled = editorMicrophoneEnabled.checked;
+  }));
+  bindRange(editorSystemAudioVolume, (value) => {
+    session.settings.audio.systemVolume = value / 100;
+  });
+  bindRange(editorMicrophoneVolume, (value) => {
+    session.settings.audio.microphoneVolume = value / 100;
+  });
   bindRange(cursorSize, (value) => { session.settings.cursorSize = value; });
   bindRange(cursorSmoothing, (value) => { session.settings.cursorSmoothing = value; });
   webcamEnabled.addEventListener("change", () => mutate(() => { session.settings.webcam.enabled = webcamEnabled.checked && session.hasWebcam; }));
@@ -1078,20 +1335,25 @@ async function setupEditor() {
 
   playhead.addEventListener("input", () => {
     video.currentTime = Number(playhead.value) / 1000;
-    syncSidecarTime();
+    syncSidecarTime(true);
     updatePlayhead();
     updateLivePreview(Number(playhead.value));
   });
+  playhead.addEventListener("pointerdown", () => selectMarker(null));
+  timelineGrid.addEventListener("pointerdown", (event) => {
+    const target = event.target as HTMLElement;
+    if (!target.closest(".recordly-zoom-region")) selectMarker(null);
+  });
   video.addEventListener("timeupdate", () => {
-    if (playhead.matches(":active")) return;
+    if (!video.paused || playhead.matches(":active")) return;
     playhead.value = String(Math.round(video.currentTime * 1000));
     updatePlayhead();
     updateLivePreview();
-    syncSidecarTime();
+    syncSidecarTime(true);
   });
   const playIcon = '<i class="ph-fill ph-play" aria-hidden="true"></i>';
   const pauseIcon = '<i class="ph-fill ph-pause" aria-hidden="true"></i>';
-  play.addEventListener("click", () => {
+  play.addEventListener("click", async () => {
     if (!video.paused) {
       video.pause();
       return;
@@ -1099,17 +1361,30 @@ async function setupEditor() {
     const nowMs = video.currentTime * 1000;
     if (nowMs < session.trimStartMs || nowMs >= session.trimEndMs) {
       video.currentTime = session.trimStartMs / 1000;
-      syncSidecarTime();
+      syncSidecarTime(true);
     }
-    void video.play();
+    play.disabled = true;
+    try {
+      await ensurePreviewReady();
+      await video.play();
+    } catch (error) {
+      previewNeedsRefresh = true;
+      videoStatus.textContent = `Preview unavailable: ${String(error)}`;
+    } finally {
+      play.disabled = false;
+    }
   });
   video.addEventListener("play", () => {
     play.classList.add("playing");
     play.innerHTML = pauseIcon;
-    syncSidecarTime();
+    syncSidecarTime(true);
     if (audioPreview.src) void audioPreview.play().catch(() => {});
     if (webcamPreview.src && !webcamPreview.hidden) void webcamPreview.play().catch(() => {});
     runLiveFrames();
+  });
+  video.addEventListener("playing", () => {
+    previewNeedsRefresh = false;
+    videoStatus.textContent = "Preview";
   });
   video.addEventListener("pause", () => {
     play.classList.remove("playing");
@@ -1120,8 +1395,17 @@ async function setupEditor() {
     updateLivePreview();
   });
   video.addEventListener("seeking", () => {
-    syncSidecarTime();
+    syncSidecarTime(true);
     updateLivePreview();
+  });
+  video.addEventListener("stalled", () => {
+    videoStatus.textContent = "Preview stalled";
+  });
+  video.addEventListener("waiting", () => {
+    videoStatus.textContent = "Buffering preview…";
+  });
+  video.addEventListener("canplay", () => {
+    if (!previewRefresh) videoStatus.textContent = "Preview";
   });
   skipBack.addEventListener("click", () => {
     video.currentTime = Math.max(session.trimStartMs / 1000, video.currentTime - 5);
@@ -1132,8 +1416,45 @@ async function setupEditor() {
   volume.addEventListener("click", () => {
     video.muted = !video.muted;
     audioPreview.muted = video.muted;
-    volume.classList.toggle("muted", video.muted);
+    syncPreviewVolume();
   });
+  previewVolume.addEventListener("input", () => {
+    previewVolumeLevel = Number(previewVolume.value) / 100;
+    syncPreviewVolume();
+  });
+  const handleEditorVisibility = () => {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      video.pause();
+      audioPreview.pause();
+      webcamPreview.pause();
+      stopLiveFrames();
+      return;
+    }
+    if (hiddenAt !== null && Date.now() - hiddenAt >= 5 * 60_000) {
+      previewNeedsRefresh = true;
+      videoStatus.textContent = "Preview ready to refresh";
+    }
+    hiddenAt = null;
+  };
+  const cleanupEditor = () => {
+    if (editorDisposed) return;
+    editorDisposed = true;
+    stopLiveFrames();
+    previewResizeObserver.disconnect();
+    timelineResizeObserver.disconnect();
+    stopProcessingProgress?.();
+    stopProcessingProgress = null;
+    document.removeEventListener("visibilitychange", handleEditorVisibility);
+    video.pause();
+    audioPreview.pause();
+    webcamPreview.pause();
+    clickPulsePool.forEach((pulse) => pulse.remove());
+    clickPulsePool.length = 0;
+  };
+  document.addEventListener("visibilitychange", handleEditorVisibility);
+  window.addEventListener("pagehide", cleanupEditor, { once: true });
+  window.addEventListener("beforeunload", cleanupEditor, { once: true });
   previewStage.addEventListener("click", (event) => {
     const marker = selected();
     if (!marker || !(event.target instanceof HTMLElement) || event.target.closest("button")) return;
@@ -1144,7 +1465,7 @@ async function setupEditor() {
     mutate(() => {
       marker.x = Math.max(0, Math.min(1, frameX));
       marker.y = Math.max(0, Math.min(1, frameY));
-    });
+    }, true);
   });
   const bindTrimHandle = (handle: HTMLElement, edge: "start" | "end") => {
     handle.addEventListener("pointerdown", (event) => {
@@ -1221,13 +1542,20 @@ async function setupEditor() {
       setBusy(false);
     }
   });
-  await listen<ProcessingProgress>("processing-progress", (event) => {
+  stopProcessingProgress = await listen<ProcessingProgress>("processing-progress", (event) => {
     progress.value = event.payload.percent;
     renderPercent.value = `${event.payload.percent}%`;
     renderStatus.textContent = event.payload.stage;
   });
+  if (editorDisposed) {
+    stopProcessingProgress();
+    stopProcessingProgress = null;
+  }
   video.addEventListener("loadeddata", () => { videoStatus.textContent = "Preview"; });
-  video.addEventListener("error", () => { videoStatus.textContent = "Preview unavailable"; });
+  video.addEventListener("error", () => {
+    previewNeedsRefresh = true;
+    videoStatus.textContent = "Preview unavailable";
+  });
 
   try {
     session = await invoke<EditorSession>("load_editor_session", { sessionId });
@@ -1250,6 +1578,13 @@ async function setupEditor() {
 
 window.addEventListener("DOMContentLoaded", () => {
   document.body.dataset.surface = editorWindow ? "editor" : settingsWindow ? "settings" : "hud";
+  // A transparent GTK/Tauri HUD can regain a click-through input region after
+  // the webview finishes loading or the compositor restores the window.  The
+  // native side also restores it, but repeat the operation from the actual
+  // HUD document so source selection never depends on a timing race.
+  if (tauriAvailable && currentWindowLabel === "main") {
+    void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => {});
+  }
   if (editorWindow) {
     void setupEditor();
     return;
@@ -1314,6 +1649,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const hudLiveState = document.querySelector<HTMLElement>("#hud-live-state");
   const hudSessionCopy = document.querySelector<HTMLElement>("#hud-session-copy");
   const hudDragHandle = document.querySelector<HTMLElement>(".hud-drag-handle");
+  const hudRail = document.querySelector<HTMLElement>(".action-rail");
   const settingsTabs = [...document.querySelectorAll<HTMLButtonElement>("[data-settings-tab]")];
   const settingsPanels = [...document.querySelectorAll<HTMLElement>("[data-settings-panel]")];
   const recordingBackgroundGallery = document.querySelector<HTMLElement>('[data-background-gallery="recording"]');
@@ -1341,26 +1677,14 @@ window.addEventListener("DOMContentLoaded", () => {
     event.preventDefault();
     void getCurrentWindow().startDragging();
   });
-
-  async function syncHudInputRegion() {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    const bounds = document.querySelector<HTMLElement>(".action-rail")?.getBoundingClientRect();
-    if (!bounds) return;
-    await invoke("hud_ready", {
-      region: {
-        x: Math.floor(bounds.left),
-        y: Math.floor(bounds.top),
-        width: Math.ceil(bounds.width),
-        height: Math.ceil(bounds.height),
-      },
-    });
-  }
+  hudRail?.addEventListener("animationend", (event) => {
+    if (event.animationName === "pikscreen-hud-shell") hudRail.classList.remove("hud-intro");
+  });
 
   async function setWindowSurface(surface: "hud" | "settings") {
     if (settingsWindow || surface === "settings") return;
     try {
       await invoke("set_window_surface", { surface });
-      if (surface === "hud") await syncHudInputRegion();
     } catch (error) {
       if (status) status.textContent = `Could not update the PikScreen window: ${String(error)}`;
     }
@@ -1455,7 +1779,7 @@ window.addEventListener("DOMContentLoaded", () => {
       selectMonitor.hidden = next !== "ready";
       if (next === "ready") {
         selectMonitor.disabled = false;
-        const label = selectMonitor.querySelector("span");
+        const label = selectMonitor.querySelector<HTMLElement>("[data-hud-source-label]");
         if (label) label.textContent = "Screen";
       }
     }
@@ -1644,7 +1968,7 @@ window.addEventListener("DOMContentLoaded", () => {
     try {
       const result = await invoke<PreviewInfo>("update_preview_crop", { previewSettings: previewSettings() });
       selectedSourceKind = result.sourceKind;
-      const sourceLabel = selectMonitor?.querySelector("span");
+      const sourceLabel = selectMonitor?.querySelector<HTMLElement>("[data-hud-source-label]");
       if (sourceLabel) sourceLabel.textContent = result.sourceKind === "window" ? "Window" : "Screen";
       syncSourceCropControls();
       if (selectedSourceMeta) selectedSourceMeta.textContent = describeCrop(result.crop, result.sourceKind);
@@ -1902,9 +2226,13 @@ window.addEventListener("DOMContentLoaded", () => {
       startRecordingTimer();
       setSettingsDisabled(true);
     } catch (error) {
-      status.textContent = String(error);
+      const detail = String(error);
+      status.textContent = detail;
       setSessionPhase("preview");
       if (startRecording) startRecording.disabled = false;
+      if (selectedSourceKind === "window") {
+        window.alert(`PikScreen could not start the selected window recording:\n\n${detail}`);
+      }
     } finally {
       startRecording.removeAttribute("aria-busy");
     }

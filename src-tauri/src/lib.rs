@@ -20,116 +20,24 @@ use tauri::{
     Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder,
 };
 
-#[cfg(target_os = "linux")]
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Mutex,
-};
-
-#[derive(Clone, Copy, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HudInputRegion {
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-}
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(target_os = "linux")]
-static HUD_INPUT_REGION: Mutex<Option<HudInputRegion>> = Mutex::new(None);
+use std::sync::atomic::AtomicBool;
 
 #[cfg(target_os = "linux")]
-static HUD_INPUT_HOOKS_INSTALLED: AtomicBool = AtomicBool::new(false);
+static HUD_INPUT_MAP_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+static HUD_INPUT_RECOVERY_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "linux")]
-fn current_hud_input_region() -> Option<HudInputRegion> {
-    HUD_INPUT_REGION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .to_owned()
-}
-
-#[cfg(target_os = "linux")]
-fn store_hud_input_region(region: Option<HudInputRegion>) {
-    *HUD_INPUT_REGION
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = region;
-}
-
-#[cfg(target_os = "linux")]
-fn apply_hud_input_region_to_gtk_window(
-    gtk_window: &gtk::ApplicationWindow,
-    region: HudInputRegion,
-) {
+fn restore_native_hud_input(gtk_window: &gtk::ApplicationWindow) {
     use gtk::prelude::*;
 
-    let Some(gdk_window) = gtk_window.window() else {
-        return;
-    };
-    let rectangle = gtk::cairo::RectangleInt::new(
-        region.x.max(0),
-        region.y.max(0),
-        region.width.max(1),
-        region.height.max(1),
-    );
-    let native_region = gtk::cairo::Region::create_rectangle(&rectangle);
-    gtk_window.input_shape_combine_region(Some(&native_region));
-    gdk_window.input_shape_combine_region(&native_region, 0, 0);
-}
-
-#[cfg(target_os = "linux")]
-fn reapply_stored_hud_input_region(gtk_window: &gtk::ApplicationWindow) {
-    if let Some(region) = current_hud_input_region() {
-        apply_hud_input_region_to_gtk_window(gtk_window, region);
+    gtk_window.input_shape_combine_region(None);
+    if let Some(gdk_window) = gtk_window.window() {
+        gdk_window.set_pass_through(false);
     }
-}
-
-#[cfg(target_os = "linux")]
-fn install_hud_input_region_hooks(gtk_window: &gtk::ApplicationWindow) {
-    use gtk::prelude::*;
-
-    if HUD_INPUT_HOOKS_INSTALLED.swap(true, Ordering::AcqRel) {
-        return;
-    }
-
-    gtk_window.connect_map(reapply_stored_hud_input_region);
-}
-
-#[cfg(target_os = "linux")]
-fn apply_native_hud_input_region(
-    window: &tauri::WebviewWindow,
-    region: HudInputRegion,
-) -> Result<(), String> {
-    store_hud_input_region(Some(region));
-    let window_for_main = window.clone();
-    window
-        .run_on_main_thread(move || {
-            let Ok(gtk_window) = window_for_main.gtk_window() else {
-                eprintln!("PikScreen could not access the GTK HUD window.");
-                return;
-            };
-            install_hud_input_region_hooks(&gtk_window);
-            apply_hud_input_region_to_gtk_window(&gtk_window, region);
-        })
-        .map_err(|error| format!("Could not schedule the native HUD input region: {error}"))
-}
-
-#[cfg(target_os = "linux")]
-fn clear_native_hud_input_region(window: &tauri::WebviewWindow) -> Result<(), String> {
-    store_hud_input_region(None);
-    let window_for_main = window.clone();
-    window
-        .run_on_main_thread(move || {
-            use gtk::prelude::*;
-
-            let Ok(gtk_window) = window_for_main.gtk_window() else {
-                eprintln!("PikScreen could not access the GTK window.");
-                return;
-            };
-            install_hud_input_region_hooks(&gtk_window);
-            gtk_window.input_shape_combine_region(None);
-        })
-        .map_err(|error| format!("Could not clear the native HUD input region: {error}"))
 }
 
 #[cfg(target_os = "linux")]
@@ -139,9 +47,13 @@ fn configure_native_hud_gtk_window(gtk_window: &gtk::ApplicationWindow, width: i
     if !gtk_window.is_realized() {
         gtk_window.set_titlebar(Option::<&gtk::Widget>::None);
     }
+    if !HUD_INPUT_MAP_HOOK_INSTALLED.swap(true, Ordering::AcqRel) {
+        gtk_window.connect_map(restore_native_hud_input);
+    }
     gtk_window.set_resizable(true);
     gtk_window.set_default_size(width, height);
     gtk_window.resize(width, height);
+    restore_native_hud_input(gtk_window);
 }
 
 #[cfg(target_os = "linux")]
@@ -171,44 +83,39 @@ fn configure_native_hud_window(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
-fn clear_native_hud_input_region(_window: &tauri::WebviewWindow) -> Result<(), String> {
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn apply_native_hud_input_region(
-    _window: &tauri::WebviewWindow,
-    _region: HudInputRegion,
-) -> Result<(), String> {
-    Ok(())
-}
-
-fn ensure_main_window_interactive(
-    window: &tauri::WebviewWindow,
-    region: Option<HudInputRegion>,
-) -> Result<(), String> {
+fn ensure_main_window_interactive(window: &tauri::WebviewWindow) -> Result<(), String> {
     window
         .set_enabled(true)
         .map_err(|error| format!("Could not enable the PikScreen window: {error}"))?;
-    #[cfg(not(target_os = "linux"))]
     window
         .set_ignore_cursor_events(false)
         .map_err(|error| format!("Could not restore PikScreen window input: {error}"))?;
-    if let Some(region) = region {
-        apply_native_hud_input_region(window, region)?;
+    #[cfg(target_os = "linux")]
+    {
+        let window_for_main = window.clone();
+        window
+            .run_on_main_thread(move || {
+                if let Ok(gtk_window) = window_for_main.gtk_window() {
+                    restore_native_hud_input(&gtk_window);
+                }
+            })
+            .map_err(|error| format!("Could not reset native PikScreen HUD input: {error}"))?;
     }
     Ok(())
 }
 
-fn schedule_main_window_input_recovery(app: tauri::AppHandle, region: Option<HudInputRegion>) {
+fn schedule_main_window_input_recovery(app: tauri::AppHandle) {
+    let generation = HUD_INPUT_RECOVERY_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     std::thread::spawn(move || {
         for delay_ms in [50, 200, 500] {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            if HUD_INPUT_RECOVERY_GENERATION.load(Ordering::Acquire) != generation {
+                return;
+            }
             let Some(window) = app.get_webview_window("main") else {
                 return;
             };
-            if let Err(error) = ensure_main_window_interactive(&window, region) {
+            if let Err(error) = ensure_main_window_interactive(&window) {
                 eprintln!("PikScreen HUD input recovery failed: {error}");
             }
         }
@@ -222,14 +129,10 @@ fn set_window_surface(app: tauri::AppHandle, surface: String) -> Result<(), Stri
         .ok_or_else(|| "PikScreen window is unavailable.".to_owned())?;
 
     let (width, height, dock_to_bottom) = match surface.as_str() {
-        "hud" => (704.0, 80.0, true),
+        "hud" => (530.0, 68.0, true),
         "review" => (980.0, 860.0, false),
         _ => return Err(format!("Unsupported PikScreen window surface: {surface}")),
     };
-
-    if surface != "hud" {
-        clear_native_hud_input_region(&window)?;
-    }
 
     let expand_surface = surface == "review";
     if surface == "hud" {
@@ -289,18 +192,8 @@ fn set_window_surface(app: tauri::AppHandle, surface: String) -> Result<(), Stri
             .map_err(|error| format!("Could not center PikScreen: {error}"))?;
     }
 
-    ensure_main_window_interactive(&window, None)?;
-    schedule_main_window_input_recovery(app, None);
-    Ok(())
-}
-
-#[tauri::command]
-fn hud_ready(app: tauri::AppHandle, region: HudInputRegion) -> Result<(), String> {
-    let hud = app
-        .get_webview_window("main")
-        .ok_or_else(|| "PikScreen HUD is unavailable.".to_owned())?;
-    ensure_main_window_interactive(&hud, Some(region))?;
-    schedule_main_window_input_recovery(app, Some(region));
+    ensure_main_window_interactive(&window)?;
+    schedule_main_window_input_recovery(app);
     Ok(())
 }
 
@@ -311,8 +204,8 @@ fn restore_hud(app: &tauri::AppHandle) -> Result<(), String> {
         .ok_or_else(|| "PikScreen HUD is unavailable.".to_owned())?;
     hud.show()
         .map_err(|error| format!("Could not restore the PikScreen HUD: {error}"))?;
-    ensure_main_window_interactive(&hud, None)?;
-    schedule_main_window_input_recovery(app.clone(), None);
+    ensure_main_window_interactive(&hud)?;
+    schedule_main_window_input_recovery(app.clone());
     hud.set_focus()
         .map_err(|error| format!("Could not focus the PikScreen HUD: {error}"))
 }
@@ -519,11 +412,11 @@ fn webcam_devices() -> Result<Vec<webcam::WebcamDevice>, String> {
 }
 
 #[tauri::command]
-fn choose_appearance_asset(
+async fn choose_appearance_asset(
     app: tauri::AppHandle,
     kind: String,
 ) -> Result<Option<appearance::AppearanceAsset>, String> {
-    appearance::choose(&app, &kind)
+    appearance::choose(app, kind).await
 }
 
 #[tauri::command]
@@ -593,7 +486,7 @@ async fn save_editor_session(
     session_id: String,
     changes: editor::EditorChanges,
 ) -> Result<export::SaveResult, String> {
-    let Some(destination) = export::choose_editor_destination(&app)? else {
+    let Some(destination) = export::choose_editor_destination(app.clone()).await? else {
         return Ok(export::canceled_save_result());
     };
     tauri::async_runtime::spawn_blocking(move || {
@@ -694,8 +587,11 @@ async fn save_final_video(
     app: tauri::AppHandle,
     source_path: String,
 ) -> Result<export::SaveResult, String> {
+    let Some(destination) = export::choose_editor_destination(app).await? else {
+        return Ok(export::canceled_save_result());
+    };
     tauri::async_runtime::spawn_blocking(move || {
-        export::save_final_video(&app, std::path::PathBuf::from(source_path))
+        export::save_final_video_to(std::path::PathBuf::from(source_path), destination)
     })
     .await
     .map_err(|error| format!("Save As task failed: {error}"))?
@@ -770,10 +666,10 @@ pub fn run() {
                 return;
             }
             if let Some(hud) = webview.app_handle().get_webview_window("main") {
-                if let Err(error) = ensure_main_window_interactive(&hud, None) {
+                if let Err(error) = ensure_main_window_interactive(&hud) {
                     eprintln!("PikScreen HUD page-load input recovery failed: {error}");
                 }
-                schedule_main_window_input_recovery(webview.app_handle().clone(), None);
+                schedule_main_window_input_recovery(webview.app_handle().clone());
             }
         })
         .setup(|app| {
@@ -785,17 +681,16 @@ pub fn run() {
                 let gtk_window = hud
                     .gtk_window()
                     .map_err(|error| std::io::Error::other(error.to_string()))?;
-                configure_native_hud_gtk_window(&gtk_window, 704, 80);
+                configure_native_hud_gtk_window(&gtk_window, 680, 64);
             }
-            ensure_main_window_interactive(&hud, None).map_err(std::io::Error::other)?;
-            schedule_main_window_input_recovery(app.handle().clone(), None);
+            ensure_main_window_interactive(&hud).map_err(std::io::Error::other)?;
+            schedule_main_window_input_recovery(app.handle().clone());
             install_tray(app)?;
             hud.show()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             set_window_surface,
-            hud_ready,
             open_editor_window,
             return_to_hud,
             probe_portals,
