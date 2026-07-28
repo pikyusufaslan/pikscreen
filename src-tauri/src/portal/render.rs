@@ -136,13 +136,18 @@ pub(super) fn render_final_video(
     cursor_strategy: CursorStrategy,
     settings: RecordingSettings,
 ) -> Result<(), String> {
-    let (_, content_height) = recordly_padded_size(width, height);
-    let frame_assets = recordly_frame_assets(
-        settings.background,
-        settings.custom_background_path.as_deref(),
-        width,
-        height,
-    )?;
+    let scene = settings.background_enabled;
+    let (_, content_height) = recordly_padded_size(width, height, scene);
+    let frame_assets = if scene {
+        Some(recordly_frame_assets(
+            settings.background,
+            settings.custom_background_path.as_deref(),
+            width,
+            height,
+        )?)
+    } else {
+        None
+    };
     let webcam_assets = webcam_path
         .map(|_| recordly_webcam_frame_assets(width, height, &settings.webcam))
         .transpose()?;
@@ -162,6 +167,7 @@ pub(super) fn render_final_video(
                     settings.fps,
                     settings.cursor_smoothing,
                     settings.cursor_size,
+                    scene,
                 )?;
                 let cursor_paths = scaled_cursor_asset_paths(
                     &cursor_track,
@@ -178,6 +184,7 @@ pub(super) fn render_final_video(
     };
     let click_tracks = if settings.click_effects_enabled {
         build_click_effect_tracks(
+            scene,
             click_samples,
             &timeline,
             events,
@@ -198,30 +205,38 @@ pub(super) fn render_final_video(
             height,
             duration_ms,
             settings.fps,
+            scene,
         )?;
     }
     let cursor_input_index = cursor_render.as_ref().map(|_| 1);
     let click_input_start = 1 + usize::from(cursor_input_index.is_some());
     let audio_input_index = click_input_start + click_tracks.len();
+    // Wallpaper, mask and shadow are only fed to ffmpeg when the scene is on,
+    // so everything after them shifts by three.
     let wallpaper_input_index = audio_input_index + usize::from(audio_path.is_some());
     let mask_input_index = wallpaper_input_index + 1;
     let shadow_input_index = wallpaper_input_index + 2;
-    let webcam_input_index = wallpaper_input_index + 3;
+    let webcam_input_index = wallpaper_input_index + if scene { 3 } else { 0 };
     let webcam_mask_input_index = webcam_input_index + 1;
-    let mut filter = recordly_card_filter(
-        width,
-        height,
-        duration_ms,
-        settings.fps,
-        mask_input_index,
-        shadow_input_index,
-    );
-    filter.push(';');
-    filter.push_str(&wallpaper_background_filter(
-        wallpaper_input_index,
-        "card",
-        "scene",
-    ));
+    let mut filter = if scene {
+        let mut filter = recordly_card_filter(
+            width,
+            height,
+            duration_ms,
+            settings.fps,
+            mask_input_index,
+            shadow_input_index,
+        );
+        filter.push(';');
+        filter.push_str(&wallpaper_background_filter(
+            wallpaper_input_index,
+            "card",
+            "scene",
+        ));
+        filter
+    } else {
+        full_frame_scene_filter(width, height, duration_ms, settings.fps)
+    };
     match (&cursor_render, cursor_input_index) {
         (Some((_, _, commands_path)), Some(input_index)) => filter.push_str(&format!(
             ";[{input_index}:v]setpts=PTS-STARTPTS,sendcmd=f={}[cursor];[scene][cursor]overlay@cursor=x=0:y=0:eval=init:format=auto:shortest=1[scene0]",
@@ -322,26 +337,28 @@ pub(super) fn render_final_video(
     if let Some(audio_path) = audio_path {
         command.args(["-i", audio_path.to_string_lossy().as_ref()]);
     }
-    command.args([
-        "-loop",
-        "1",
-        "-framerate",
-        &fps,
-        "-i",
-        frame_assets.wallpaper_path.to_string_lossy().as_ref(),
-        "-loop",
-        "1",
-        "-framerate",
-        &fps,
-        "-i",
-        frame_assets.mask_path.to_string_lossy().as_ref(),
-        "-loop",
-        "1",
-        "-framerate",
-        &fps,
-        "-i",
-        frame_assets.shadow_path.to_string_lossy().as_ref(),
-    ]);
+    if let Some(frame_assets) = frame_assets.as_ref() {
+        command.args([
+            "-loop",
+            "1",
+            "-framerate",
+            &fps,
+            "-i",
+            frame_assets.wallpaper_path.to_string_lossy().as_ref(),
+            "-loop",
+            "1",
+            "-framerate",
+            &fps,
+            "-i",
+            frame_assets.mask_path.to_string_lossy().as_ref(),
+            "-loop",
+            "1",
+            "-framerate",
+            &fps,
+            "-i",
+            frame_assets.shadow_path.to_string_lossy().as_ref(),
+        ]);
+    }
     if let (Some(webcam_path), Some(webcam_assets)) = (webcam_path, webcam_assets.as_ref()) {
         command.args(["-i", webcam_path.to_string_lossy().as_ref()]);
         command.args([
@@ -616,6 +633,7 @@ pub(super) fn build_cursor_track(
     fps: u32,
     cursor_smoothing: u8,
     cursor_size: u8,
+    scene: bool,
 ) -> Result<CursorTrack, String> {
     let frame_count = duration_ms.saturating_mul(fps as u64) / 1_000 + 2;
     let mut frames = Vec::with_capacity(frame_count as usize);
@@ -659,6 +677,7 @@ pub(super) fn build_cursor_track(
                 width,
                 height,
                 cursor_size as f64 / 100.0,
+                scene,
             );
             let base_x = x.floor();
             let base_y = y.floor();
@@ -738,6 +757,7 @@ impl CursorTrack {
 }
 
 pub(super) fn build_click_effect_tracks(
+    scene: bool,
     samples: &[ClickSample],
     timeline: &CursorTimeline,
     events: &[crate::zoom::ZoomEvent],
@@ -756,7 +776,15 @@ pub(super) fn build_click_effect_tracks(
         let path = temporary_file("click-pulse", "rgba");
         let commands_path = temporary_file("click-commands", "txt");
         write_click_effect_frames(&path, sample.primary, fps)?;
-        write_click_effect_commands(&commands_path, tracks.len(), sample, width, height, fps)?;
+        write_click_effect_commands(
+            &commands_path,
+            tracks.len(),
+            sample,
+            width,
+            height,
+            fps,
+            scene,
+        )?;
         tracks.push(ClickEffectTrack {
             path,
             commands_path,
@@ -845,6 +873,7 @@ pub(super) fn write_click_effect_commands(
     width: u32,
     height: u32,
     fps: u32,
+    scene: bool,
 ) -> Result<(), String> {
     let file = File::create(path)
         .map_err(|error| format!("Could not create click-effect command file: {error}"))?;
@@ -862,7 +891,7 @@ pub(super) fn write_click_effect_commands(
             x: sample.x,
             y: sample.y,
         };
-        let (x, y) = recordly_stage_click_position(point, width, height);
+        let (x, y) = recordly_stage_click_position(point, width, height, scene);
         writeln!(
             file,
             "{:.6} overlay@click{index} x {:.3}, overlay@click{index} y {:.3};",
@@ -1121,11 +1150,12 @@ pub(super) fn write_camera_commands(
     height: u32,
     duration_ms: u64,
     fps: u32,
+    scene: bool,
 ) -> Result<(), String> {
     let file = File::create(path)
         .map_err(|error| format!("Could not create camera command file: {error}"))?;
     let mut file = BufWriter::new(file);
-    for interval in camera_command_intervals(events, width, height, duration_ms, fps) {
+    for interval in camera_command_intervals(scene, events, width, height, duration_ms, fps) {
         writeln!(
             file,
             "{:.6}-{:.6} [enter] crop@camera w {}, [enter] crop@camera h {}, [enter] crop@camera x {}, [enter] crop@camera y {};",
@@ -1150,6 +1180,7 @@ pub(super) struct CameraCommandInterval {
 }
 
 pub(super) fn camera_command_intervals(
+    scene: bool,
     events: &[crate::zoom::ZoomEvent],
     width: u32,
     height: u32,
@@ -1170,7 +1201,7 @@ pub(super) fn camera_command_intervals(
             .unwrap_or(1_000.0 / fps.max(1) as f64);
         previous_time_ms = Some(time_ms);
         let transform = spring.step(target, delta_ms);
-        let rect = camera_crop_rect(transform, width, height);
+        let rect = camera_crop_rect(transform, width, height, scene);
         if previous_rect == Some(rect) {
             continue;
         }
@@ -1207,10 +1238,11 @@ pub(super) fn camera_crop_rect(
     transform: CameraTransform,
     width: u32,
     height: u32,
+    scene: bool,
 ) -> CameraCropRect {
     let crop_width = ((width as f64 / transform.scale).round() as u32).clamp(1, width);
     let crop_height = ((height as f64 / transform.scale).round() as u32).clamp(1, height);
-    let (content_width, content_height) = recordly_padded_size(width, height);
+    let (content_width, content_height) = recordly_padded_size(width, height, scene);
     let inset_x = width.saturating_sub(content_width) as f64 / 2.0;
     let inset_y = height.saturating_sub(content_height) as f64 / 2.0;
     let focus_x = transform.crop_x + 0.5 / transform.scale;
@@ -1427,10 +1459,24 @@ pub(super) fn recordly_card_filter(
     mask_input_index: usize,
     shadow_input_index: usize,
 ) -> String {
-    let (content_width, content_height) = recordly_padded_size(width, height);
+    let (content_width, content_height) = recordly_padded_size(width, height, true);
     let padded_duration = duration_ms as f64 / 1_000.0 + 1.0 / fps.max(1) as f64;
     format!(
         "[0:v]setpts=PTS-STARTPTS,fps={fps},tpad=stop_mode=clone:stop_duration={padded_duration:.6},scale={content_width}:{content_height}:flags=lanczos,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=rgba[content];[{mask_input_index}:v]format=gray,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black[frame_mask];[content][frame_mask]alphamerge[content_with_mask];[{shadow_input_index}:v]format=rgba[frame_shadow];[frame_shadow][content_with_mask]overlay=0:0:format=auto:shortest=1[card]"
+    )
+}
+
+/// The recording as the whole frame: no inset card, no rounded mask, no
+/// shadow and no wallpaper behind it.
+pub(super) fn full_frame_scene_filter(
+    width: u32,
+    height: u32,
+    duration_ms: u64,
+    fps: u32,
+) -> String {
+    let padded_duration = duration_ms as f64 / 1_000.0 + 1.0 / fps.max(1) as f64;
+    format!(
+        "[0:v]setpts=PTS-STARTPTS,fps={fps},tpad=stop_mode=clone:stop_duration={padded_duration:.6},scale={width}:{height}:flags=lanczos,format=rgba[scene]"
     )
 }
 
@@ -1456,7 +1502,7 @@ pub(super) fn recordly_frame_assets(
     width: u32,
     height: u32,
 ) -> Result<RecordlyFrameAssets, String> {
-    let (content_width, content_height) = recordly_padded_size(width, height);
+    let (content_width, content_height) = recordly_padded_size(width, height, true);
     let mask_svg_path = temporary_file("recordly-squircle-mask", "svg");
     let shadow_svg_path = temporary_file("recordly-squircle-shadow", "svg");
     let mask_path = temporary_file("recordly-squircle-mask", "png");
@@ -1613,7 +1659,16 @@ pub(super) fn rasterize_static_svg(
     }
 }
 
-pub(super) fn recordly_padded_size(width: u32, height: u32) -> (u32, u32) {
+/// Size of the area the recording occupies inside the output frame.
+///
+/// With the scene on this is Recordly's inset card; with it off the recording
+/// fills the frame. Everything positioned over the recording - cursor, click
+/// pulses, camera crops - measures against this, so the two layouts stay in
+/// agreement by asking here rather than each applying the inset themselves.
+pub(super) fn recordly_padded_size(width: u32, height: u32, scene: bool) -> (u32, u32) {
+    if !scene {
+        return (width, height);
+    }
     // Port of Recordly's DEFAULT_PADDING (20) and PADDING_SCALE_FACTOR (0.2):
     // each linked side consumes 4% of the canvas dimension.
     (
@@ -1688,8 +1743,9 @@ pub(super) fn recordly_stage_cursor_position(
     width: u32,
     height: u32,
     cursor_scale: f64,
+    scene: bool,
 ) -> (f64, f64) {
-    let (content_width, content_height) = recordly_padded_size(width, height);
+    let (content_width, content_height) = recordly_padded_size(width, height, scene);
     let inset_x = (width.saturating_sub(content_width)) as f64 / 2.0;
     let inset_y = (height.saturating_sub(content_height)) as f64 / 2.0;
     let stage_scale = content_height as f64 / height as f64;
@@ -1704,8 +1760,9 @@ pub(super) fn recordly_stage_click_position(
     point: CursorPoint,
     width: u32,
     height: u32,
+    scene: bool,
 ) -> (f64, f64) {
-    let (content_width, content_height) = recordly_padded_size(width, height);
+    let (content_width, content_height) = recordly_padded_size(width, height, scene);
     let inset_x = (width.saturating_sub(content_width)) as f64 / 2.0;
     let inset_y = (height.saturating_sub(content_height)) as f64 / 2.0;
     (
@@ -1727,6 +1784,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn turning_the_scene_off_gives_the_recording_the_whole_frame() {
+        assert_eq!(recordly_padded_size(1_920, 1_080, true), (1_766, 994));
+        assert_eq!(recordly_padded_size(1_920, 1_080, false), (1_920, 1_080));
+    }
+
+    #[test]
+    fn the_scene_off_filter_composites_nothing_behind_the_recording() {
+        let filter = full_frame_scene_filter(1_920, 1_080, 4_000, 120);
+
+        assert!(filter.contains("scale=1920:1080"));
+        assert!(filter.ends_with("[scene]"));
+        // No card, so nothing to mask, shadow or lay over a wallpaper.
+        assert!(!filter.contains("alphamerge"));
+        assert!(!filter.contains("overlay"));
+        assert!(!filter.contains("[wallpaper]"));
+        // tpad extends the last frame and is unrelated to the card's padding.
+        assert!(!filter.contains("pad=1920:1080"));
+    }
+
+    #[test]
+    fn overlays_drop_the_inset_when_the_scene_is_off() {
+        let centre = CursorPoint { x: 0.5, y: 0.5 };
+        let edge = CursorPoint { x: 1.0, y: 1.0 };
+        let tile = CLICK_TILE_SIZE as f64 / 2.0;
+
+        // The centre of the recording is the centre of the frame either way.
+        assert_eq!(
+            recordly_stage_click_position(centre, 1_920, 1_080, false).0,
+            1_920.0 / 2.0 - tile
+        );
+        assert_eq!(
+            recordly_stage_click_position(centre, 1_920, 1_080, true).0,
+            1_920.0 / 2.0 - tile
+        );
+        // Its right edge is the frame's edge only once the inset is gone.
+        assert_eq!(
+            recordly_stage_click_position(edge, 1_920, 1_080, false).0,
+            1_920.0 - tile
+        );
+        assert!(recordly_stage_click_position(edge, 1_920, 1_080, true).0 < 1_920.0 - tile);
+    }
+
+    #[test]
     fn camera_crop_uses_the_recordly_camera_transform() {
         let transform = CameraTransform::at(
             build_zoom_events(
@@ -1743,7 +1843,7 @@ mod tests {
             1_000 + ZoomTiming::default().zoom_in_ms,
             ZoomTiming::default(),
         );
-        let rect = camera_crop_rect(transform, 1_920, 1_080);
+        let rect = camera_crop_rect(transform, 1_920, 1_080, true);
         assert_eq!((rect.width, rect.height), (1_067, 600));
         assert!(rect.x < 853);
         assert!(rect.y < 480);
@@ -1759,6 +1859,7 @@ mod tests {
             },
             1_920,
             1_080,
+            true,
         );
         assert_eq!(rect.width, 1_067);
         assert_eq!(rect.x, 780);
@@ -1778,7 +1879,7 @@ mod tests {
             }],
             ZoomTiming::default(),
         );
-        let intervals = camera_command_intervals(&events, 1_920, 1_080, 5_000, 120);
+        let intervals = camera_command_intervals(true, &events, 1_920, 1_080, 5_000, 120);
         assert_eq!(intervals.first().map(|interval| interval.start_ms), Some(0));
         assert!(intervals
             .windows(2)
@@ -1805,7 +1906,7 @@ mod tests {
             }],
             ZoomTiming::default(),
         );
-        write_camera_commands(&path, &events, 1_920, 1_080, 4_500, 120)
+        write_camera_commands(&path, &events, 1_920, 1_080, 4_500, 120, true)
             .expect("camera commands should be written");
         let commands = fs::read_to_string(&path).expect("camera commands should be readable");
         let _ = fs::remove_file(path);
@@ -1962,7 +2063,7 @@ mod tests {
                 kind: TahoeCursor::Arrow,
             },
         ]);
-        let track = build_cursor_track(&timeline, &[], 1_920, 1_080, 1_000, 120, 0, 100)
+        let track = build_cursor_track(&timeline, &[], 1_920, 1_080, 1_000, 120, 0, 100, true)
             .expect("stationary cursor track should be built");
         write_cursor_commands(&path, &track)
             .expect("stationary cursor command file should be written");
@@ -2014,9 +2115,9 @@ mod tests {
                 kind: TahoeCursor::Arrow,
             },
         ]);
-        let raw = build_cursor_track(&timeline, &[], 1_920, 1_080, 1_000, 120, 0, 100)
+        let raw = build_cursor_track(&timeline, &[], 1_920, 1_080, 1_000, 120, 0, 100, true)
             .expect("raw cursor track should be built");
-        let smoothed = build_cursor_track(&timeline, &[], 1_920, 1_080, 1_000, 120, 100, 100)
+        let smoothed = build_cursor_track(&timeline, &[], 1_920, 1_080, 1_000, 120, 100, 100, true)
             .expect("smoothed cursor track should be built");
         let frame = 60;
         assert!(smoothed.frames[frame].origin_x < raw.frames[frame].origin_x);
@@ -2098,7 +2199,7 @@ mod tests {
     fn cursor_uses_the_same_padded_stage_as_the_recording() {
         let point = CursorPoint { x: 0.8, y: 0.8 };
         let metrics = tahoe_cursor_metrics(TahoeCursor::Arrow).expect("Arrow metrics should load");
-        let (x, y) = recordly_stage_cursor_position(point, metrics, 1_920, 1_080, 1.0);
+        let (x, y) = recordly_stage_cursor_position(point, metrics, 1_920, 1_080, 1.0, true);
         let stage_scale = 994.0 / 1_080.0;
         let (hotspot_x, hotspot_y) = tahoe_cursor_hotspot_offset(metrics, stage_scale);
         assert!((x + hotspot_x - 1_489.8).abs() < 0.001);
@@ -2107,7 +2208,8 @@ mod tests {
 
     #[test]
     fn click_effect_is_centered_on_the_same_padded_stage() {
-        let (x, y) = recordly_stage_click_position(CursorPoint { x: 0.5, y: 0.5 }, 1_920, 1_080);
+        let (x, y) =
+            recordly_stage_click_position(CursorPoint { x: 0.5, y: 0.5 }, 1_920, 1_080, true);
         assert!((x + CLICK_TILE_SIZE as f64 / 2.0 - 960.0).abs() < f64::EPSILON);
         assert!((y + CLICK_TILE_SIZE as f64 / 2.0 - 540.0).abs() < f64::EPSILON);
         let pulse = rasterize_click_pulse_tile(true, 0.0);

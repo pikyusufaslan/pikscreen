@@ -393,6 +393,11 @@ pub struct RecordingSettings {
     pub(crate) fps: u32,
     pub(crate) quality: VideoQuality,
     pub(crate) background: BackgroundStyle,
+    /// With the scene off the recording fills the frame: no wallpaper, no
+    /// padding, no rounded card. Older payloads predate the toggle and expect
+    /// the scene, so absence means on.
+    #[serde(default = "default_background_enabled")]
+    pub(crate) background_enabled: bool,
     #[serde(default)]
     pub(crate) custom_background_path: Option<String>,
     #[serde(default = "default_cursor_visible")]
@@ -410,6 +415,10 @@ pub struct RecordingSettings {
     pub(crate) audio: AudioSettings,
     #[serde(default)]
     pub(crate) webcam: WebcamSettings,
+}
+
+pub(crate) fn default_background_enabled() -> bool {
+    true
 }
 
 pub(crate) fn default_cursor_smoothing() -> u8 {
@@ -2559,6 +2568,7 @@ mod tests {
     #[test]
     fn recording_settings_accept_the_supported_high_frame_rates() {
         let settings = RecordingSettings {
+            background_enabled: true,
             fps: 180,
             quality: VideoQuality::Ultra,
             background: BackgroundStyle::SonomaClouds,
@@ -2650,6 +2660,7 @@ mod tests {
     #[test]
     fn recording_settings_reject_an_unbounded_fps_value() {
         assert!(RecordingSettings {
+            background_enabled: true,
             fps: 144,
             quality: VideoQuality::High,
             background: BackgroundStyle::TahoeDark,
@@ -2677,6 +2688,7 @@ mod tests {
     #[test]
     fn recording_settings_reject_cursor_smoothing_above_one_hundred() {
         let error = RecordingSettings {
+            background_enabled: true,
             fps: 120,
             quality: VideoQuality::High,
             background: BackgroundStyle::TahoeDark,
@@ -2705,6 +2717,7 @@ mod tests {
     #[test]
     fn recording_settings_reject_cursor_sizes_outside_the_supported_range() {
         let error = RecordingSettings {
+            background_enabled: true,
             fps: 120,
             quality: VideoQuality::High,
             background: BackgroundStyle::TahoeDark,
@@ -2733,6 +2746,7 @@ mod tests {
     #[test]
     fn recording_settings_reject_zoom_amounts_outside_the_supported_range() {
         let error = RecordingSettings {
+            background_enabled: true,
             fps: 120,
             quality: VideoQuality::High,
             background: BackgroundStyle::TahoeDark,

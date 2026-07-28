@@ -126,6 +126,7 @@ type RecordingSettings = {
   fps: number;
   quality: "balanced" | "high" | "ultra";
   background: "pureBlack" | "pureWhite" | "tahoeLight" | "tahoeDark" | "midnight8" | "ipad17Dark" | "ipad17Light" | "sequoiaBlue" | "sequoiaBlueOrange" | "ventura" | "sonomaClouds" | "sonomaLight" | "sonomaDark" | "glassmorphism3" | "glassmorphism4" | "energy19" | "wallpaper3" | "wallpaper4" | "cityscape" | "levels" | "wallpaper10" | "venturaDark" | "sonomaEvening" | "sonomaHorizon" | "iridescent9" | "energy17";
+  backgroundEnabled: boolean;
   customBackgroundPath: string | null;
   cursorVisible: boolean;
   customCursorPath: string | null;
@@ -581,6 +582,7 @@ async function setupEditor() {
   const background = query<HTMLSelectElement>("#editor-background");
   const customBackground = query<HTMLButtonElement>("#editor-custom-background");
   const customBackgroundName = query<HTMLElement>("#editor-custom-background-name");
+  const backgroundEnabled = query<HTMLInputElement>("#editor-background-enabled");
   const cursorVisible = query<HTMLInputElement>("#editor-cursor-visible");
   const cursorSize = query<HTMLInputElement>("#editor-cursor-size");
   const cursorSizeOutput = query<HTMLOutputElement>("#editor-cursor-size-output");
@@ -700,19 +702,27 @@ async function setupEditor() {
     video.style.left = "0";
     video.style.top = "0";
 
-    const customBackgroundUrl = previewAssetUrl(
-      session.settings.customBackgroundPath,
-      session.customBackgroundUrl,
-    );
+    // With the scene off the recording is the whole frame, so there is nothing
+    // to put behind it. The stylesheet drops the card's inset and rounding off
+    // the same flag, matching what the export produces.
+    const sceneOn = session.settings.backgroundEnabled !== false;
+    sceneCanvas.dataset.scene = sceneOn ? "on" : "off";
+    const customBackgroundUrl = sceneOn
+      ? previewAssetUrl(session.settings.customBackgroundPath, session.customBackgroundUrl)
+      : "";
     const selectedBackground = backgroundPreview(session.settings.background);
-    sceneCanvas.style.backgroundImage = customBackgroundUrl
-      ? `url("${customBackgroundUrl}")`
-      : selectedBackground.image
-        ? `url("${selectedBackground.image}")`
-        : "none";
-    sceneCanvas.style.backgroundColor = customBackgroundUrl
-      ? "#10131a"
-      : selectedBackground.color;
+    sceneCanvas.style.backgroundImage = !sceneOn
+      ? "none"
+      : customBackgroundUrl
+        ? `url("${customBackgroundUrl}")`
+        : selectedBackground.image
+          ? `url("${selectedBackground.image}")`
+          : "none";
+    sceneCanvas.style.backgroundColor = !sceneOn
+      ? "#000"
+      : customBackgroundUrl
+        ? "#10131a"
+        : selectedBackground.color;
 
     const showWebcam = Boolean(session.hasWebcam && session.webcamUrl && session.settings.webcam.enabled);
     webcamPreview.hidden = !showWebcam;
@@ -729,8 +739,11 @@ async function setupEditor() {
   const updateLivePreview = (timeMs = Math.round(video.currentTime * 1000 || Number(playhead.value || 0))) => {
     if (!sessionReady) return;
     const camera = cameraAtEditorTime(timeMs);
-    const contentInset = 0.04;
-    const contentScale = 0.92;
+    // Mirrors recordly_padded_size: inset card while the scene is on, whole
+    // frame once it is off.
+    const sceneOn = session.settings.backgroundEnabled !== false;
+    const contentInset = sceneOn ? 0.04 : 0;
+    const contentScale = sceneOn ? 0.92 : 1;
     const viewportSize = 1 / camera.scale;
     const sourceFocusX = camera.cropX + viewportSize / 2;
     const sourceFocusY = camera.cropY + viewportSize / 2;
@@ -1055,6 +1068,7 @@ async function setupEditor() {
     background.value = session.settings.background;
     syncEditorBackgroundGallery();
     customBackgroundName.textContent = session.settings.customBackgroundPath?.split("/").pop() ?? "No custom image";
+    backgroundEnabled.checked = session.settings.backgroundEnabled !== false;
     cursorVisible.checked = session.settings.cursorVisible;
     cursorSize.value = String(session.settings.cursorSize);
     cursorSizeOutput.value = `${session.settings.cursorSize}%`;
@@ -1343,6 +1357,9 @@ async function setupEditor() {
   background.addEventListener("change", () => mutate(() => {
     session.settings.background = background.value as RecordingSettings["background"];
     session.settings.customBackgroundPath = null;
+  }));
+  backgroundEnabled.addEventListener("change", () => mutate(() => {
+    session.settings.backgroundEnabled = backgroundEnabled.checked;
   }));
   cursorVisible.addEventListener("change", () => mutate(() => { session.settings.cursorVisible = cursorVisible.checked; }));
   clickEffects.addEventListener("change", () => mutate(() => { session.settings.clickEffectsEnabled = clickEffects.checked; }));
@@ -1805,6 +1822,7 @@ window.addEventListener("DOMContentLoaded", () => {
     fps: Number(fps?.value ?? 120),
     quality: (quality?.value ?? "high") as RecordingSettings["quality"],
     background: (background?.value ?? "tahoeDark") as RecordingSettings["background"],
+    backgroundEnabled: true,
     customBackgroundPath,
     cursorVisible: cursorOn,
     customCursorPath,

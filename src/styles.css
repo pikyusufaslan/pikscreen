@@ -1595,6 +1595,14 @@ body[data-surface="editor"] .settings-shell {
   box-shadow: 0 12px 28px rgb(0 0 0 / 0.34);
 }
 
+/* Scene off: the recording is the frame, so the card that framed it goes away
+   entirely rather than sitting on a plain colour. */
+.editor-scene-canvas[data-scene="off"] .editor-camera-frame {
+  inset: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .editor-camera-frame > video {
   position: absolute;
   z-index: 1;
