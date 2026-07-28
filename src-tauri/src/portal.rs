@@ -10,7 +10,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File},
-    io::{BufRead, BufReader, BufWriter, Read, Write},
+    io::{BufRead, BufReader, BufWriter, Write},
     os::unix::net::UnixStream,
     os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
@@ -37,7 +37,7 @@ use crate::{
         PortalCursorObservation,
     },
     webcam::{self, WebcamRecorder, WebcamSettings},
-    window_pipewire::{self, WindowPipelineProfile, WindowRecorder},
+    window_pipewire::{self, ChildLog, WindowPipelineProfile, WindowRecorder},
     zoom::{
         build_zoom_events, camera_transform_at, CameraTransform, Marker, RecordlyCameraSpring,
         ZoomTiming,
@@ -245,7 +245,7 @@ struct PreviewSelection {
 }
 
 enum VideoRecorder {
-    WfRecorder(Child),
+    WfRecorder(Child, ChildLog),
     Portal(WindowRecorder),
 }
 
@@ -743,12 +743,10 @@ pub async fn select_monitor(
     let id = state.next_capture_id.fetch_add(1, Ordering::Relaxed);
     let backend = capture_backend()?;
     trace_portal_selection("opening ScreenCast portal");
-    let portal = Screencast::new()
-        .await
-        .map_err(|error| {
-            trace_portal_selection(&format!("opening ScreenCast portal failed: {error}"));
-            format!("Could not open the ScreenCast portal: {error}")
-        })?;
+    let portal = Screencast::new().await.map_err(|error| {
+        trace_portal_selection(&format!("opening ScreenCast portal failed: {error}"));
+        format!("Could not open the ScreenCast portal: {error}")
+    })?;
     let interface_version = portal.version();
     let available_cursor_modes = screen_cast_cursor_modes(&portal)
         .await
@@ -1218,14 +1216,15 @@ pub fn start_recording(
         })?;
         VideoRecorder::Portal(recorder)
     } else {
-        VideoRecorder::WfRecorder(spawn_cursorless_recorder(
+        let (child, log) = spawn_cursorless_recorder(
             crop.x,
             crop.y,
             crop.width,
             crop.height,
             &source_path,
             settings.clone(),
-        )?)
+        )?;
+        VideoRecorder::WfRecorder(child, log)
     };
     if !preview.backend.uses_portal_stream(preview.source_kind) {
         ensure_video_recorder_started(&mut recorder)?;
@@ -2560,7 +2559,7 @@ fn spawn_cursorless_recorder(
     height: i32,
     source_path: &PathBuf,
     settings: RecordingSettings,
-) -> Result<Child, String> {
+) -> Result<(Child, ChildLog), String> {
     let binary = cursorless_recorder_binary()?;
     let geometry = format!("{x},{y} {width}x{height}");
     let fps = settings.fps_argument();
@@ -2588,6 +2587,15 @@ fn spawn_cursorless_recorder(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("Could not start the cursorless recorder: {error}"))
+        .map(|mut child| {
+            // Same reason the PipeWire pipeline drains its pipe: an unread
+            // stderr stalls the writer once 64 KB accumulate.
+            let log = match child.stderr.take() {
+                Some(stderr) => ChildLog::drain(stderr),
+                None => ChildLog::detached(),
+            };
+            (child, log)
+        })
 }
 
 fn spawn_audio_recorder(audio_path: &PathBuf, audio: AudioSettings) -> Result<Child, String> {
@@ -5077,7 +5085,7 @@ fn cursor_is_hidden(events: &[crate::zoom::ZoomEvent], time_ms: u64) -> bool {
     })
 }
 
-fn stop_child(recorder: Child) -> Result<(), String> {
+fn stop_child(recorder: Child, log: &ChildLog) -> Result<(), String> {
     if unsafe { libc::kill(recorder.id() as i32, libc::SIGINT) } != 0
         && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
     {
@@ -5086,16 +5094,17 @@ fn stop_child(recorder: Child) -> Result<(), String> {
             std::io::Error::last_os_error()
         ));
     }
-    let output = recorder
-        .wait_with_output()
+    let mut recorder = recorder;
+    let status = recorder
+        .wait()
         .map_err(|error| format!("Could not finalize recording: {error}"))?;
-    if output.status.success() || output.status.signal() == Some(libc::SIGINT) {
+    if status.success() || status.signal() == Some(libc::SIGINT) {
         Ok(())
     } else {
         Err(format!(
             "Cursorless wf-recorder exited unsuccessfully: {} [recorder: {}]",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            status,
+            log.snapshot().trim()
         ))
     }
 }
@@ -5103,7 +5112,7 @@ fn stop_child(recorder: Child) -> Result<(), String> {
 fn ensure_video_recorder_started(recorder: &mut VideoRecorder) -> Result<(), String> {
     match recorder {
         VideoRecorder::Portal(recorder) => window_pipewire::ensure_recorder_started(recorder),
-        VideoRecorder::WfRecorder(recorder) => {
+        VideoRecorder::WfRecorder(recorder, log) => {
             std::thread::sleep(Duration::from_millis(200));
             let Some(status) = recorder
                 .try_wait()
@@ -5111,13 +5120,9 @@ fn ensure_video_recorder_started(recorder: &mut VideoRecorder) -> Result<(), Str
             else {
                 return Ok(());
             };
-            let mut stderr = String::new();
-            if let Some(mut pipe) = recorder.stderr.take() {
-                let _ = pipe.read_to_string(&mut stderr);
-            }
             Err(format!(
                 "Cursorless recorder failed during startup with {status}: {}",
-                stderr.trim()
+                log.snapshot().trim()
             ))
         }
     }
@@ -5125,7 +5130,7 @@ fn ensure_video_recorder_started(recorder: &mut VideoRecorder) -> Result<(), Str
 
 fn stop_video_recorder(recorder: VideoRecorder) -> Result<(), String> {
     match recorder {
-        VideoRecorder::WfRecorder(recorder) => stop_child(recorder),
+        VideoRecorder::WfRecorder(recorder, log) => stop_child(recorder, &log),
         VideoRecorder::Portal(recorder) => window_pipewire::stop_recorder(recorder),
     }
 }

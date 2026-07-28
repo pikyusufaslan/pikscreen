@@ -1,12 +1,13 @@
 use std::{
     fs,
-    io::{Read, Result as IoResult, Write},
+    io::{BufRead, BufReader, Result as IoResult, Write},
     os::{
         fd::{AsRawFd, OwnedFd},
         unix::process::{CommandExt, ExitStatusExt},
     },
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Child, ChildStderr, Command, ExitStatus, Stdio},
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -16,6 +17,17 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 const STARTUP_FRAME_TIMEOUT: Duration = Duration::from_secs(3);
 const DEBUG_LOG_PATH: &str = "/tmp/pikscreen-window-pipewire.log";
+
+/// Keep the tail of a recording's output rather than all of it: a capture can
+/// run for hours, and only the most recent lines explain a failure.
+const CHILD_LOG_CAPACITY: usize = 128 * 1024;
+/// pipewiresrc logs its stream transitions at debug level.  Reaching this one
+/// means PipeWire negotiated a format, buffers are allocated and frames are
+/// moving, which is what "the recording started" actually means.
+const STREAMING_MARKER: &str = "got stream state streaming";
+/// Both the pipewiresrc warning and the gst-launch error line carry the reason
+/// after this prefix.
+const STREAM_ERROR_MARKER: &str = "stream error: ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowPipelineProfile {
@@ -36,6 +48,7 @@ impl WindowPipelineProfile {
 
 pub struct WindowRecorder {
     child: Child,
+    log: ChildLog,
     profile: WindowPipelineProfile,
     output_path: PathBuf,
 }
@@ -44,6 +57,100 @@ pub struct WindowRecorder {
 struct ChildResult {
     status: ExitStatus,
     stderr: String,
+}
+
+/// A child's stderr, drained from the moment it starts.
+///
+/// A pipe holds 64 KB. A chatty `GST_DEBUG` fills that in well under a second,
+/// and once it is full the child blocks in `write(2)` before it ever produces a
+/// frame, which reads from the outside as a source that silently never
+/// delivers. Reading the pipe continuously is what keeps that from happening;
+/// the stream transitions are picked up on the way past.
+#[derive(Clone)]
+pub struct ChildLog {
+    inner: Arc<Mutex<ChildLogInner>>,
+}
+
+#[derive(Default)]
+struct ChildLogInner {
+    text: String,
+    streaming: bool,
+    error: Option<String>,
+}
+
+impl ChildLog {
+    pub fn drain(stderr: ChildStderr) -> Self {
+        let inner = Arc::new(Mutex::new(ChildLogInner::default()));
+        let writer = Arc::clone(&inner);
+        thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                writer
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner())
+                    .push(&line);
+            }
+        });
+        Self { inner }
+    }
+
+    pub fn detached() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(ChildLogInner::default())),
+        }
+    }
+
+    pub fn snapshot(&self) -> String {
+        self.inner
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .text
+            .clone()
+    }
+
+    fn saw_streaming(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .streaming
+    }
+
+    fn stream_error(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .error
+            .clone()
+    }
+}
+
+impl ChildLogInner {
+    fn push(&mut self, line: &str) {
+        if line.contains(STREAMING_MARKER) {
+            self.streaming = true;
+        }
+        if self.error.is_none() {
+            if let Some(reason) = line.split(STREAM_ERROR_MARKER).nth(1) {
+                let reason = reason.trim();
+                if !reason.is_empty() {
+                    self.error = Some(reason.to_owned());
+                }
+            }
+        }
+
+        self.text.push_str(line);
+        self.text.push('\n');
+        while self.text.len() > CHILD_LOG_CAPACITY {
+            // Drop whole lines from the front. A newline is always a character
+            // boundary, so the remainder stays valid UTF-8.
+            match self.text.find('\n') {
+                Some(end) => drop(self.text.drain(..=end)),
+                None => {
+                    self.text.clear();
+                    break;
+                }
+            }
+        }
+    }
 }
 
 pub fn probe_profile(
@@ -68,8 +175,8 @@ pub fn probe_profile(
         output_path,
         Some(2),
     );
-    let child = spawn_gst(pipewire_fd, &args)?;
-    let result = wait_for_child(child, PROBE_TIMEOUT)?;
+    let (child, log) = spawn_gst(pipewire_fd, &args)?;
+    let result = wait_for_child(child, &log, PROBE_TIMEOUT)?;
     if !result.status.success() {
         return Err(format!(
             "{} probe exited with {}: {}",
@@ -121,9 +228,10 @@ pub fn spawn_recorder(
         output_path,
         None,
     );
-    let child = spawn_gst(pipewire_fd, &args)?;
+    let (child, log) = spawn_gst(pipewire_fd, &args)?;
     Ok(WindowRecorder {
         child,
+        log,
         profile,
         output_path: output_path.to_path_buf(),
     })
@@ -132,16 +240,31 @@ pub fn spawn_recorder(
 pub fn ensure_recorder_started(recorder: &mut WindowRecorder) -> Result<(), String> {
     let started_at = Instant::now();
     loop {
+        // The stream reports a negotiation failure before the process reacts to
+        // it, and it names the reason. Check it first so a broken pipeline
+        // fails in milliseconds with something actionable instead of after the
+        // full timeout with "no first frame".
+        if let Some(error) = recorder.log.stream_error() {
+            return Err(fail_startup(
+                recorder,
+                &format!("PipeWire stream failed: {error}"),
+            ));
+        }
+
         if let Some(status) = recorder
             .child
             .try_wait()
             .map_err(|error| format!("Could not inspect the window PipeWire pipeline: {error}"))?
         {
-            let diagnostic = compact_log(&read_child_stderr(&mut recorder.child));
+            let diagnostic = compact_log(&recorder.log.snapshot());
             append_debug_log(&format!(
                 "{} exited during startup with {status}: {diagnostic}",
                 recorder.profile.label()
             ));
+            append_debug_blob(
+                &format!("{} full stderr", recorder.profile.label()),
+                &recorder.log.snapshot(),
+            );
             return Err(format!(
                 "{} recorder failed during startup with {}: {}",
                 recorder.profile.label(),
@@ -150,10 +273,16 @@ pub fn ensure_recorder_started(recorder: &mut WindowRecorder) -> Result<(), Stri
             ));
         }
 
-        // A running gst-launch process is not enough: Niri can accept a
-        // window stream connection and then never deliver a frame.  A
-        // streamable Matroska file grows as soon as the first encoded frame
-        // reaches the muxer, so use that as the startup readiness signal.
+        // Reaching the streaming state means the format is negotiated and
+        // buffers are flowing, which holds even for an idle window that niri
+        // only draws once.
+        if recorder.log.saw_streaming() {
+            return Ok(());
+        }
+
+        // Secondary signal, so a future change to GST_DEBUG cannot silently
+        // turn startup detection off: a streamable Matroska file grows as soon
+        // as the first encoded frame reaches the muxer.
         let has_frame_data = fs::metadata(&recorder.output_path)
             .map(|metadata| metadata.len() > 1_024)
             .unwrap_or(false);
@@ -162,33 +291,36 @@ pub fn ensure_recorder_started(recorder: &mut WindowRecorder) -> Result<(), Stri
         }
 
         if started_at.elapsed() >= STARTUP_FRAME_TIMEOUT {
-            let _ = signal_child(&recorder.child, libc::SIGINT);
-            let result = wait_for_child_inner(&mut recorder.child, Duration::from_secs(1));
-            let (diagnostic, raw) = match result {
-                Ok(result) => (compact_log(&result.stderr), Some(result.stderr)),
-                Err(error) => (error, None),
-            };
-            append_debug_log(&format!(
-                "{} timed out waiting for a first frame: {diagnostic}",
-                recorder.profile.label()
-            ));
-            if let Some(raw) = raw {
-                append_debug_blob(&format!("{} full stderr", recorder.profile.label()), &raw);
-            }
-            return Err(format!(
-                "{} recorder did not receive a first frame within {:.1}s: {}",
-                recorder.profile.label(),
-                STARTUP_FRAME_TIMEOUT.as_secs_f64(),
-                diagnostic
+            return Err(fail_startup(
+                recorder,
+                &format!(
+                    "PipeWire stream never started within {:.1}s",
+                    STARTUP_FRAME_TIMEOUT.as_secs_f64()
+                ),
             ));
         }
         thread::sleep(Duration::from_millis(25));
     }
 }
 
+/// Stop a recorder that failed to start and turn its output into one message
+/// for the UI, keeping the untruncated version in the debug log.
+fn fail_startup(recorder: &mut WindowRecorder, reason: &str) -> String {
+    let _ = signal_child(&recorder.child, libc::SIGINT);
+    let _ = wait_for_child_inner(&mut recorder.child, &recorder.log, Duration::from_secs(1));
+    let raw = recorder.log.snapshot();
+    let label = recorder.profile.label();
+    append_debug_log(&format!("{label} {reason}: {}", compact_log(&raw)));
+    append_debug_blob(&format!("{label} full stderr"), &raw);
+    format!(
+        "{label} recorder could not start: {reason}. {}",
+        compact_log(&raw)
+    )
+}
+
 pub fn stop_recorder(mut recorder: WindowRecorder) -> Result<(), String> {
     signal_child(&recorder.child, libc::SIGINT)?;
-    let result = match wait_for_child_inner(&mut recorder.child, STOP_TIMEOUT) {
+    let result = match wait_for_child_inner(&mut recorder.child, &recorder.log, STOP_TIMEOUT) {
         Ok(result) => result,
         Err(timeout_error) => {
             return verify_video(&recorder.output_path).map_err(|verify_error| {
@@ -358,7 +490,7 @@ fn profile_conversion_args(profile: WindowPipelineProfile) -> Vec<String> {
     }
 }
 
-fn spawn_gst(pipewire_fd: OwnedFd, args: &[String]) -> Result<Child, String> {
+fn spawn_gst(pipewire_fd: OwnedFd, args: &[String]) -> Result<(Child, ChildLog), String> {
     let mut command = Command::new("gst-launch-1.0");
     append_debug_log(&format!("spawn gst-launch-1.0 {}", args.join(" ")));
     command
@@ -377,9 +509,14 @@ fn spawn_gst(pipewire_fd: OwnedFd, args: &[String]) -> Result<Child, String> {
     unsafe {
         command.pre_exec(move || prepare_child_process(&pipewire_fd));
     }
-    command
+    let mut child = command
         .spawn()
-        .map_err(|error| format!("Could not start the window PipeWire pipeline: {error}"))
+        .map_err(|error| format!("Could not start the window PipeWire pipeline: {error}"))?;
+    let log = match child.stderr.take() {
+        Some(stderr) => ChildLog::drain(stderr),
+        None => ChildLog::detached(),
+    };
+    Ok((child, log))
 }
 
 fn prepare_child_process(pipewire_fd: &OwnedFd) -> IoResult<()> {
@@ -419,11 +556,19 @@ fn inherit_pipewire_fd(pipewire_fd: &OwnedFd) -> IoResult<()> {
     Ok(())
 }
 
-fn wait_for_child(mut child: Child, timeout: Duration) -> Result<ChildResult, String> {
-    wait_for_child_inner(&mut child, timeout)
+fn wait_for_child(
+    mut child: Child,
+    log: &ChildLog,
+    timeout: Duration,
+) -> Result<ChildResult, String> {
+    wait_for_child_inner(&mut child, log, timeout)
 }
 
-fn wait_for_child_inner(child: &mut Child, timeout: Duration) -> Result<ChildResult, String> {
+fn wait_for_child_inner(
+    child: &mut Child,
+    log: &ChildLog,
+    timeout: Duration,
+) -> Result<ChildResult, String> {
     let started_at = Instant::now();
     loop {
         if let Some(status) = child
@@ -432,7 +577,7 @@ fn wait_for_child_inner(child: &mut Child, timeout: Duration) -> Result<ChildRes
         {
             return Ok(ChildResult {
                 status,
-                stderr: read_child_stderr(child),
+                stderr: log.snapshot(),
             });
         }
         if started_at.elapsed() >= timeout {
@@ -441,7 +586,7 @@ fn wait_for_child_inner(child: &mut Child, timeout: Duration) -> Result<ChildRes
             return Err(format!(
                 "Window PipeWire pipeline timed out after {:.1}s: {}",
                 timeout.as_secs_f64(),
-                compact_log(&read_child_stderr(child))
+                compact_log(&log.snapshot())
             ));
         }
         thread::sleep(Duration::from_millis(25));
@@ -459,14 +604,6 @@ fn signal_child(child: &Child, signal: i32) -> Result<(), String> {
             std::io::Error::last_os_error()
         ))
     }
-}
-
-fn read_child_stderr(child: &mut Child) -> String {
-    let mut stderr = String::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        let _ = pipe.read_to_string(&mut stderr);
-    }
-    stderr
 }
 
 fn compact_log(log: &str) -> String {
@@ -576,6 +713,83 @@ fn validate_video_probe(probe: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
+
+    fn scan(lines: &[&str]) -> ChildLogInner {
+        let mut log = ChildLogInner::default();
+        for line in lines {
+            log.push(line);
+        }
+        log
+    }
+
+    #[test]
+    fn startup_completes_when_the_stream_reaches_streaming() {
+        let log = scan(&[
+            "0:00:00.011 DEBUG pipewiresrc on_state_changed:<pipewiresrc0> got stream state connecting",
+            "0:00:00.023 DEBUG pipewiresrc on_state_changed:<pipewiresrc0> got stream state paused",
+            "0:00:00.310 DEBUG pipewiresrc on_state_changed:<pipewiresrc0> got stream state streaming",
+        ]);
+
+        assert!(log.streaming);
+        assert_eq!(log.error, None);
+    }
+
+    #[test]
+    fn a_stream_that_only_connects_is_not_treated_as_started() {
+        let log = scan(&[
+            "0:00:00.011 DEBUG pipewiresrc on_state_changed:<pipewiresrc0> got stream state connecting",
+            "0:00:00.023 DEBUG pipewiresrc on_state_changed:<pipewiresrc0> got stream state paused",
+        ]);
+
+        assert!(!log.streaming);
+    }
+
+    #[test]
+    fn negotiation_failure_is_captured_with_its_reason() {
+        let log = scan(&[
+            "0:00:00.014 WARN pipewiresrc on_state_changed:<pipewiresrc0> error: stream error: no more input formats",
+            "ERROR: from element /GstPipeline:pipeline0/GstPipeWireSrc:pipewiresrc0: stream error: target not found",
+        ]);
+
+        // The first reason is the real one; the later line is the same failure
+        // surfacing again through gst-launch.
+        assert_eq!(log.error.as_deref(), Some("no more input formats"));
+    }
+
+    #[test]
+    fn ordinary_output_carries_no_verdict() {
+        let log = scan(&["Setting pipeline to PAUSED ...", "Redistribute latency..."]);
+
+        assert!(!log.streaming);
+        assert_eq!(log.error, None);
+        assert!(log.text.contains("Redistribute latency..."));
+    }
+
+    #[test]
+    fn the_buffer_keeps_the_tail_of_a_long_recording() {
+        let mut log = ChildLogInner::default();
+        for index in 0..40_000 {
+            log.push(&format!("line {index}"));
+        }
+
+        assert!(log.text.len() <= CHILD_LOG_CAPACITY);
+        assert!(log.text.contains("line 39999"));
+        assert!(!log.text.contains("line 0\n"));
+        // Dropping happens on line boundaries, so the tail stays parseable.
+        assert!(log.text.starts_with("line "));
+    }
+
+    #[test]
+    fn a_verdict_survives_the_buffer_dropping_the_line_that_set_it() {
+        let mut log = ChildLogInner::default();
+        log.push("got stream state streaming");
+        for index in 0..40_000 {
+            log.push(&format!("filler {index}"));
+        }
+
+        assert!(!log.text.contains("got stream state streaming"));
+        assert!(log.streaming);
+    }
 
     #[test]
     fn rounds_recording_dimensions_down_to_even_pixels() {
