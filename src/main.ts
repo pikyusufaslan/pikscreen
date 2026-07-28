@@ -4,6 +4,31 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import "@phosphor-icons/web/regular";
 import "@phosphor-icons/web/fill";
 
+// A range track cannot read its own value in CSS, so mirror the filled
+// proportion onto the element and let the stylesheet paint up to it. Deriving
+// it from the input's own min and max means every slider fills correctly
+// without per-slider arithmetic at each call site.
+function syncRangeFill(input: HTMLInputElement) {
+  const min = Number(input.min || 0);
+  const max = Number(input.max || 100);
+  const span = max - min;
+  const filled = span > 0 ? (Number(input.value) - min) / span : 0;
+  input.style.setProperty("--range-fill", `${Math.min(Math.max(filled, 0), 1) * 100}%`);
+}
+
+function syncRangeFills(root: ParentNode = document) {
+  root.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(syncRangeFill);
+}
+
+document.addEventListener(
+  "input",
+  (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.type === "range") syncRangeFill(target);
+  },
+  true,
+);
+
 const tahoeCursorUrl = new URL("../src-tauri/assets/pikscreen-tahoe-pointer.svg", import.meta.url).href;
 const routeParameters = new URLSearchParams(window.location.search);
 const requestedSurface = routeParameters.get("surface");
@@ -54,9 +79,18 @@ function mountBackgroundGallery(
     button.className = "wallpaper-tile";
     button.dataset.background = value;
     if (file) {
-      button.style.backgroundImage = `url("${new URL(`../src-tauri/assets/wallpapers/${file}`, import.meta.url).href}")`;
+      // These are full resolution wallpapers. As CSS backgrounds all two dozen
+      // decode at once when the panel opens and the interface stalls for a
+      // couple of seconds; an img defers the ones that are off screen and keeps
+      // the decode off the main thread.
+      const thumbnail = document.createElement("img");
+      thumbnail.className = "wallpaper-thumbnail";
+      thumbnail.loading = "lazy";
+      thumbnail.decoding = "async";
+      thumbnail.alt = "";
+      thumbnail.src = new URL(`../src-tauri/assets/wallpapers/${file}`, import.meta.url).href;
+      button.append(thumbnail);
     } else {
-      button.style.backgroundImage = "none";
       button.style.backgroundColor = color;
       button.classList.add("solid-color");
     }
@@ -926,6 +960,11 @@ async function setupEditor() {
     focusPreview.style.top = `${marker.y * 100}%`;
     focusPreview.style.width = `${Math.min(82, 100 / depth)}%`;
   };
+  // Everything outside the trim is dropped on export, and on this recording it
+  // is the black lead in and lead out. Keeping the playhead inside the trim is
+  // what makes the editor show the same thing the export produces.
+  const clampToTrim = (ms: number) =>
+    Math.min(Math.max(ms, session.trimStartMs), session.trimEndMs);
   const updatePlayhead = () => {
     const now = Number(playhead.value);
     const ratio = session.durationMs ? now / session.durationMs : 0;
@@ -1045,12 +1084,13 @@ async function setupEditor() {
   const syncAll = () => {
     durationOutput.value = formatElapsed(session.durationMs);
     playhead.max = String(session.durationMs);
-    playhead.value = String(Math.min(Number(playhead.value || 0), session.durationMs));
+    playhead.value = String(clampToTrim(Number(playhead.value || 0)));
     syncSettings();
     syncMarkerPanel();
     syncTimeline();
     syncPreviewVolume();
     updateLivePreview();
+    syncRangeFills();
   };
   const syncSession = (next: EditorSession, reloadVideo = true) => {
     const resumeAt = Number.isFinite(video.currentTime) ? video.currentTime : 0;
@@ -1347,13 +1387,50 @@ async function setupEditor() {
     });
   });
 
-  playhead.addEventListener("input", () => {
-    video.currentTime = Number(playhead.value) / 1000;
+  // A range input fires `input` for every pixel of travel, and assigning
+  // currentTime each time restarts the seek before the previous one finished.
+  // The webview blanks the video surface in between, which is the flicker while
+  // dragging. Coalesce to one seek per frame, and while the pointer is down use
+  // fastSeek: it lands on the nearest keyframe instead of decoding up to an
+  // exact position that is about to be replaced anyway.
+  let scrubbing = false;
+  let queuedSeekMs: number | null = null;
+  let seekFrame = 0;
+  const flushSeek = () => {
+    seekFrame = 0;
+    if (queuedSeekMs === null) return;
+    const seconds = queuedSeekMs / 1000;
+    queuedSeekMs = null;
+    if (scrubbing && typeof video.fastSeek === "function") video.fastSeek(seconds);
+    else video.currentTime = seconds;
     syncSidecarTime(true);
+  };
+  const seekPreview = (ms: number) => {
+    queuedSeekMs = ms;
+    if (!seekFrame) seekFrame = requestAnimationFrame(flushSeek);
+  };
+  playhead.addEventListener("input", () => {
+    if (!sessionReady) return;
+    const target = clampToTrim(Number(playhead.value));
+    if (String(target) !== playhead.value) playhead.value = String(target);
     updatePlayhead();
-    updateLivePreview(Number(playhead.value));
+    updateLivePreview(target);
+    seekPreview(target);
   });
-  playhead.addEventListener("pointerdown", () => selectMarker(null));
+  const endScrub = () => {
+    if (!scrubbing) return;
+    scrubbing = false;
+    // fastSeek only promises a nearby keyframe, so settle on the exact spot the
+    // pointer was released at.
+    if (sessionReady) seekPreview(clampToTrim(Number(playhead.value)));
+  };
+  playhead.addEventListener("pointerdown", () => {
+    scrubbing = true;
+    selectMarker(null);
+  });
+  playhead.addEventListener("pointerup", endScrub);
+  playhead.addEventListener("pointercancel", endScrub);
+  playhead.addEventListener("change", endScrub);
   timelineGrid.addEventListener("pointerdown", (event) => {
     const target = event.target as HTMLElement;
     if (!target.closest(".recordly-zoom-region")) selectMarker(null);
@@ -1852,7 +1929,7 @@ window.addEventListener("DOMContentLoaded", () => {
     }
     if (slider) {
       slider.disabled = !enabled;
-      slider.style.setProperty("--audio-level", `${slider.value}%`);
+      syncRangeFill(slider);
     }
     if (output && slider) output.value = `${slider.value}%`;
   }
@@ -1872,12 +1949,13 @@ window.addEventListener("DOMContentLoaded", () => {
     if (webcamDevice) webcamDevice.disabled = !webcamAvailable || !webcamOn;
   }
   function syncSavedSettingsUi() {
+    queueMicrotask(syncRangeFills);
     syncAudioControl(systemAudioEnabled, systemAudioVolume, systemAudioVolumeOutput, systemAudioOn);
     syncAudioControl(microphoneEnabled, microphoneVolume, microphoneVolumeOutput, microphoneOn);
     syncHudAudioToggle(hudSystemAudio, systemAudioOn, "System audio");
     syncHudAudioToggle(hudMicrophone, microphoneOn, "Microphone");
     if (cursorSmoothing) {
-      cursorSmoothing.style.setProperty("--audio-level", `${cursorSmoothing.value}%`);
+      syncRangeFill(cursorSmoothing);
       if (cursorSmoothingOutput) cursorSmoothingOutput.value = `${cursorSmoothing.value}%`;
     }
     syncCursorSize();
@@ -1898,14 +1976,14 @@ window.addEventListener("DOMContentLoaded", () => {
   function syncZoomScale() {
     if (!zoomScale) return;
     const zoom = Number(zoomScale.value) / 100;
-    zoomScale.style.setProperty("--audio-level", `${((Number(zoomScale.value) - 120) / 120) * 100}%`);
+    syncRangeFill(zoomScale);
     if (zoomScaleOutput) zoomScaleOutput.value = `${zoom.toFixed(2).replace(/0$/, "")}×`;
     if (zoomDemo) zoomDemo.style.setProperty("--zoom-viewport-size", `${100 / zoom}%`);
   }
   function syncCursorSize() {
     const size = Number(cursorSize?.value ?? 100);
     if (cursorSize) {
-      cursorSize.style.setProperty("--audio-level", `${((size - 60) / 90) * 100}%`);
+      syncRangeFill(cursorSize);
       if (cursorSizeOutput) cursorSizeOutput.value = `${size}%`;
     }
     if (zoomDemo) {
@@ -2103,7 +2181,7 @@ window.addEventListener("DOMContentLoaded", () => {
   systemAudioVolume?.addEventListener("change", () => void persistSettings());
   microphoneVolume?.addEventListener("change", () => void persistSettings());
   cursorSmoothing?.addEventListener("input", () => {
-    cursorSmoothing.style.setProperty("--audio-level", `${cursorSmoothing.value}%`);
+    syncRangeFill(cursorSmoothing);
     if (cursorSmoothingOutput) cursorSmoothingOutput.value = `${cursorSmoothing.value}%`;
   });
   cursorSmoothing?.addEventListener("change", () => void persistSettings());
