@@ -975,6 +975,9 @@ async function setupEditor() {
     window.addEventListener("pointerup", end, { once: true });
   };
   const syncTimeline = () => {
+    // A ResizeObserver fires as soon as it starts observing, which is before
+    // the session has loaded.
+    if (!sessionReady) return;
     const hasAudioTrack = Boolean(session.audioUrl);
     audioTrackLabel.hidden = !hasAudioTrack;
     audioLane.hidden = !hasAudioTrack;
@@ -1174,9 +1177,20 @@ async function setupEditor() {
     });
     return previewRefresh;
   };
+  // Hiding the editor lets the webview release the media element's backing
+  // resources. What comes back reports readyState HAVE_ENOUGH_DATA while
+  // holding no buffered data at all: play() resolves, currentTime never moves
+  // and no frame is ever painted, so the preview looks frozen while the sidecar
+  // audio keeps going. Nothing about the element says "error", so the empty
+  // buffer is the signal that it has to be reloaded.
+  // HAVE_CURRENT_DATA upwards means there is data for the current position, so
+  // it has to be buffered somewhere. An element still loading has a low
+  // readyState and an empty buffer, which is ordinary and left alone.
+  const previewMediaIsStale = () =>
+    Boolean(video.error)
+    || (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.buffered.length === 0);
   const ensurePreviewReady = async () => {
-    const stale = previewNeedsRefresh || Boolean(video.error);
-    if (stale) await refreshIdlePreview();
+    if (previewNeedsRefresh || previewMediaIsStale()) await refreshIdlePreview();
   };
   const mutate = (change: () => void, cameraChanged = false) => {
     pushHistory();
@@ -1431,7 +1445,9 @@ async function setupEditor() {
       stopLiveFrames();
       return;
     }
-    if (hiddenAt !== null && Date.now() - hiddenAt >= 5 * 60_000) {
+    // How long the editor stayed hidden says nothing about whether the media
+    // survived it, so ask the element instead of the clock.
+    if (hiddenAt !== null && previewMediaIsStale()) {
       previewNeedsRefresh = true;
       videoStatus.textContent = "Preview ready to refresh";
     }
