@@ -1418,8 +1418,7 @@ async function setupEditor() {
     if (queuedSeekMs === null) return;
     const seconds = queuedSeekMs / 1000;
     queuedSeekMs = null;
-    if (scrubbing && typeof video.fastSeek === "function") video.fastSeek(seconds);
-    else video.currentTime = seconds;
+    video.currentTime = seconds;
     syncSidecarTime(true);
   };
   const seekPreview = (ms: number) => {
