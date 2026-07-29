@@ -535,6 +535,7 @@ async function setupEditor() {
   const sceneViewport = query<HTMLElement>("#editor-scene-viewport");
   const sceneCanvas = query<HTMLElement>("#editor-scene-canvas");
   const cameraFrame = query<HTMLElement>("#editor-camera-frame");
+  const scrubFrame = query<HTMLCanvasElement>("#editor-scrub-frame");
   const liveCursor = query<HTMLImageElement>("#editor-live-cursor");
   const clickLayer = query<HTMLElement>("#editor-click-layer");
   const videoStatus = query<HTMLElement>("#editor-video-status");
@@ -1408,12 +1409,43 @@ async function setupEditor() {
     });
   });
 
+  // The webview empties the video's surface for the duration of a seek, and the
+  // camera frame's own near-black background shows through. Dragging the
+  // playhead seeks continuously, so that reads as a strobe. Holding the last
+  // decoded frame on a canvas over the video covers the gap: the preview shows
+  // the most recent frame instead of nothing, and updates as new ones arrive.
+  const scrubContext = scrubFrame.getContext("2d");
+  const captureFrame = () => {
+    if (!scrubContext || !video.videoWidth) return false;
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false;
+    if (scrubFrame.width !== video.videoWidth || scrubFrame.height !== video.videoHeight) {
+      scrubFrame.width = video.videoWidth;
+      scrubFrame.height = video.videoHeight;
+    }
+    try {
+      scrubContext.drawImage(video, 0, 0, scrubFrame.width, scrubFrame.height);
+    } catch {
+      return false;
+    }
+    return true;
+  };
+  const holdLastFrame = () => {
+    if (captureFrame()) scrubFrame.hidden = false;
+  };
+  const releaseLastFrame = () => {
+    scrubFrame.hidden = true;
+  };
+  // Each completed seek is a fresh frame to hold, so the held image tracks the
+  // drag rather than freezing on wherever it started.
+  video.addEventListener("seeked", () => {
+    if (scrubbing) captureFrame();
+    else releaseLastFrame();
+  });
+
   // A range input fires `input` for every pixel of travel, and assigning
   // currentTime each time restarts the seek before the previous one finished.
-  // The webview blanks the video surface in between, which is the flicker while
-  // dragging. Coalesce to one seek per frame, and while the pointer is down use
-  // fastSeek: it lands on the nearest keyframe instead of decoding up to an
-  // exact position that is about to be replaced anyway.
+  // Coalesce to one seek per frame so the decoder is not asked for positions
+  // that are already obsolete.
   let scrubbing = false;
   let queuedSeekMs: number | null = null;
   let seekFrame = 0;
@@ -1440,12 +1472,23 @@ async function setupEditor() {
   const endScrub = () => {
     if (!scrubbing) return;
     scrubbing = false;
-    // fastSeek only promises a nearby keyframe, so settle on the exact spot the
-    // pointer was released at.
     if (sessionReady) seekPreview(clampToTrim(Number(playhead.value)));
+    // The held frame comes down once the video is painting again. Releasing the
+    // pointer without moving it leaves nothing to seek to and no seeked event,
+    // so a deadline takes it down in that case rather than leaving a still
+    // image over a live video.
+    let timer = 0;
+    const release = () => {
+      window.clearTimeout(timer);
+      video.removeEventListener("seeked", release);
+      releaseLastFrame();
+    };
+    timer = window.setTimeout(release, 500);
+    video.addEventListener("seeked", release);
   };
   playhead.addEventListener("pointerdown", () => {
     scrubbing = true;
+    holdLastFrame();
     selectMarker(null);
   });
   playhead.addEventListener("pointerup", endScrub);

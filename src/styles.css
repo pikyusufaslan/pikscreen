@@ -1603,6 +1603,24 @@ body[data-surface="editor"] .settings-shell {
   box-shadow: none;
 }
 
+/* Holds the last decoded frame while the video element is seeking. The webview
+   empties the video's surface for the duration of a seek, which uncovers the
+   frame's own near-black background; dragging the playhead turned that into a
+   strobe. Sits directly over the video and under the cursor overlay. */
+.editor-scrub-frame {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.editor-scrub-frame[hidden] {
+  display: none;
+}
+
 .editor-camera-frame > video {
   position: absolute;
   z-index: 1;
