@@ -291,7 +291,7 @@ kbd {
 /* Hero */
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
   align-items: center;
   gap: clamp(36px, 5vw, 64px);
   min-height: min(100dvh, 720px);
@@ -323,8 +323,8 @@ kbd {
 }
 
 .hero h1 {
-  max-width: 16ch;
-  font-size: clamp(2.25rem, 4.3vw, 3.4rem);
+  max-width: 21ch;
+  font-size: clamp(2.05rem, 3.85vw, 3.05rem);
   font-weight: 700;
   line-height: 1.04;
   letter-spacing: -0.035em;

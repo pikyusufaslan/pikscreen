@@ -22,10 +22,11 @@ is the honest destination.
 
 ## Structure
 
-1. **Hero** — wordmark, the positioning line, one sentence on what makes it
-   different: zoom moves are placed while recording and refined afterwards
-   without touching the take. Primary action to the repository, secondary to
-   the walkthrough below. An alpha badge sits with it rather than hidden.
+1. **Hero** — wordmark, then the headline positions the tool against the one
+   people already know: "Screen Studio, but you zoom while recording." One
+   sentence underneath carries the platform and the non-destructive editor.
+   Primary action to the repository, secondary to the walkthrough below. An
+   alpha badge sits with it rather than hidden.
 2. **Demo** — the largest block on the page: a recording being directed, then
    refined in the editor. This is the whole argument; everything else supports
    it.
