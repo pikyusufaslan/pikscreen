@@ -1240,12 +1240,16 @@ async function setupEditor() {
   // HAVE_CURRENT_DATA upwards means there is data for the current position, so
   // it has to be buffered somewhere. An element still loading has a low
   // readyState and an empty buffer, which is ordinary and left alone.
+  // A media element the webview has dropped still claims HAVE_ENOUGH_DATA while
+  // holding nothing: play() resolves, currentTime never advances and no frame
+  // is painted. Both halves are needed to tell that apart from ordinary work -
+  // a seek empties the buffer for a moment too, and treating that as death
+  // reloads the whole preview for no reason.
   const previewMediaIsStale = () =>
     Boolean(video.error)
-    || (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.buffered.length === 0);
-  const ensurePreviewReady = async () => {
-    if (previewNeedsRefresh || previewMediaIsStale()) await refreshIdlePreview();
-  };
+    || (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA
+      && !video.seeking
+      && video.buffered.length === 0);
   const mutate = (change: () => void, cameraChanged = false) => {
     pushHistory();
     change();
@@ -1470,15 +1474,23 @@ async function setupEditor() {
       video.currentTime = session.trimStartMs / 1000;
       syncSidecarTime(true);
     }
-    play.disabled = true;
     try {
-      await ensurePreviewReady();
+      // Only a reload is worth blocking the button for; clicking again during
+      // one would fight it. play() itself can take a while on a source with
+      // sparse keyframes, and the button has to stay usable so a second click
+      // can still pause.
+      if (previewNeedsRefresh || previewMediaIsStale()) {
+        play.disabled = true;
+        try {
+          await refreshIdlePreview();
+        } finally {
+          play.disabled = false;
+        }
+      }
       await video.play();
     } catch (error) {
       previewNeedsRefresh = true;
       videoStatus.textContent = `Preview unavailable: ${String(error)}`;
-    } finally {
-      play.disabled = false;
     }
   });
   video.addEventListener("play", () => {
