@@ -418,7 +418,7 @@ fn recording_pipeline_args(
             format!("qpi={crf}"),
             format!("qpp={crf}"),
             "target-usage=7".to_owned(),
-            format!("key-int-max={}", fps.saturating_mul(2)),
+            format!("key-int-max={}", keyframe_interval(fps)),
             "!".to_owned(),
         ]),
         WindowPipelineProfile::MemFdX264 => args.extend([
@@ -428,7 +428,7 @@ fn recording_pipeline_args(
             "pass=qual".to_owned(),
             format!("quantizer={crf}"),
             format!("bitrate={max_bitrate_kbps}"),
-            format!("key-int-max={}", fps.saturating_mul(2)),
+            format!("key-int-max={}", keyframe_interval(fps)),
             "!".to_owned(),
         ]),
     }
@@ -453,6 +453,18 @@ fn recording_pipeline_args(
         format!("location={}", output_path.display()),
     ]);
     args
+}
+
+/// Frames between keyframes in the intermediate recording.
+///
+/// A decoder has to start from the previous keyframe, so how far apart they sit
+/// is how much work a seek costs. At two seconds the editor's playhead decoded
+/// up to two seconds of frames for every move and the preview went black in
+/// between. A quarter second keeps scrubbing responsive; this file is only an
+/// intermediate that the final export re-encodes from, so the extra size does
+/// not reach the output.
+fn keyframe_interval(fps: u32) -> u32 {
+    (fps / 4).max(1)
 }
 
 fn identity_eos_after(output_frames: u32) -> u32 {
@@ -940,6 +952,39 @@ mod tests {
         assert!(args.contains(&"compositor".to_owned()));
         assert!(!args.iter().any(|arg| arg.starts_with("keepalive-time=")));
         assert!(!args.iter().any(|arg| arg.starts_with("eos-after=")));
+    }
+
+    #[test]
+    fn keyframes_stay_close_enough_to_scrub_through() {
+        // A quarter second at each supported rate.
+        assert_eq!(keyframe_interval(120), 30);
+        assert_eq!(keyframe_interval(60), 15);
+        assert_eq!(keyframe_interval(30), 7);
+        // Never zero, whatever the rate.
+        assert_eq!(keyframe_interval(1), 1);
+        assert_eq!(keyframe_interval(0), 1);
+    }
+
+    #[test]
+    fn both_profiles_ask_the_encoder_for_those_keyframes() {
+        for profile in WindowPipelineProfile::ALL {
+            let args = recording_pipeline_args(
+                7,
+                profile,
+                1_920,
+                1_080,
+                120,
+                18,
+                "medium",
+                2_048,
+                Path::new("/tmp/window.mkv"),
+                None,
+            );
+            assert!(
+                args.contains(&"key-int-max=30".to_owned()),
+                "{profile:?} should carry the scrubbable interval: {args:?}"
+            );
+        }
     }
 
     #[test]
