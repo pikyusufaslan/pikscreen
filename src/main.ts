@@ -983,7 +983,7 @@ async function setupEditor() {
   const closeClipMenu = () => {
     clipMenu.hidden = true;
   };
-  const openClipMenu = (event: MouseEvent) => {
+  const openClipMenu = (event: MouseEvent, overZoomLane: boolean) => {
     const rect = clipLane.getBoundingClientRect();
     if (rect.width <= 0) return;
     const ratio = (event.clientX - rect.left) / rect.width;
@@ -993,6 +993,12 @@ async function setupEditor() {
     );
     selectSegment(under < 0 ? null : under);
 
+    // Adding a zoom belongs to the zoom lane; cutting belongs to the clip lane.
+    clipMenu
+      .querySelectorAll<HTMLElement>("[data-clip-group]")
+      .forEach((group) => {
+        group.hidden = group.dataset.clipGroup === "zoom" ? !overZoomLane : overZoomLane;
+      });
     clipMenu.querySelectorAll<HTMLButtonElement>("[data-clip-action]").forEach((item) => {
       const action = item.dataset.clipAction;
       if (action === "split") item.disabled = segmentAt(menuTimeMs) < 0;
@@ -1238,6 +1244,39 @@ async function setupEditor() {
       return region;
     }));
     deleteClip.disabled = selectedSegment === null || session.segments.length < 2;
+
+    // What the cuts removed is gone from the whole timeline, not just the clip
+    // lane, so the other tracks show the same holes rather than implying their
+    // contents survive there.
+    const gaps: Array<[number, number]> = [];
+    let cursor = 0;
+    for (const segment of session.segments) {
+      if (segment.startMs > cursor) gaps.push([cursor, segment.startMs]);
+      cursor = segment.endMs;
+    }
+    if (cursor < session.durationMs) gaps.push([cursor, session.durationMs]);
+    const paintGaps = (lane: HTMLElement, ranges: Array<[number, number]>) => {
+      lane.querySelectorAll(".lane-gap").forEach((node) => node.remove());
+      for (const [from, to] of ranges) {
+        const gap = document.createElement("span");
+        gap.className = "lane-gap";
+        gap.style.left = `${(from / session.durationMs) * 100}%`;
+        gap.style.width = `${((to - from) / session.durationMs) * 100}%`;
+        lane.append(gap);
+      }
+    };
+    paintGaps(markerLane, gaps);
+    if (hasAudioTrack) {
+      // Detached audio keeps its own cuts, so its holes are its own.
+      const audioGaps: Array<[number, number]> = [];
+      let audioCursor = 0;
+      for (const segment of session.audioSegments) {
+        if (segment.startMs > audioCursor) audioGaps.push([audioCursor, segment.startMs]);
+        audioCursor = segment.endMs;
+      }
+      if (audioCursor < session.durationMs) audioGaps.push([audioCursor, session.durationMs]);
+      paintGaps(audioLane, audioGaps);
+    }
   };
   const syncSettings = () => {
     background.value = session.settings.background;
@@ -1455,13 +1494,24 @@ async function setupEditor() {
   timelineGrid.addEventListener("contextmenu", (event) => {
     if (!sessionReady) return;
     event.preventDefault();
-    openClipMenu(event);
+    const overZoomLane = Boolean(
+      (event.target as HTMLElement).closest("#editor-marker-lane, .recordly-zoom-region"),
+    );
+    openClipMenu(event, overZoomLane);
   });
   clipMenu.addEventListener("click", (event) => {
     const item = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-clip-action]");
     if (!item || item.disabled) return;
     closeClipMenu();
     switch (item.dataset.clipAction) {
+      case "zoom":
+      case "zoom-hidden":
+        // Place it where the menu was opened rather than at the playhead.
+        playhead.value = String(Math.round(menuTimeMs));
+        updatePlayhead();
+        seekPreview(Math.round(menuTimeMs));
+        createMarker(item.dataset.clipAction === "zoom-hidden");
+        break;
       case "split":
         // Cut where the menu was opened, not where the playhead happens to be.
         playhead.value = String(Math.round(menuTimeMs));

@@ -2580,7 +2580,10 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
 }
 .editor-tool span { display: none; }
 .editor-tool i { font-size: 19px; }
-.editor-tool.active { color: #f1f1ec; background: #202023; box-shadow: inset 2px 0 #f1f1ec; }
+/* Inverted against the rail, so the open panel's tool is unmistakable without
+   a marker sitting beside it. */
+.editor-tool.active,
+.editor-tool.active:hover { color: #0b0b0d; background: #f1f1ec; }
 .editor-inspector {
   position: absolute;
   z-index: 12;
@@ -2790,4 +2793,47 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+
+/* The two kinds of zoom carry the colours their regions use on the timeline. */
+.clip-menu .swatch {
+  width: 16px;
+  height: 16px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 10px;
+  display: inline-grid;
+  place-items: center;
+}
+
+.clip-menu .swatch.zoom {
+  border-color: rgb(94 154 255 / 0.72);
+  color: #dbeaff;
+  background: rgb(57 128 255 / 0.28);
+}
+
+.clip-menu .swatch.zoom-hidden {
+  border-color: rgb(255 162 91 / 0.8);
+  color: #ffead9;
+  background: rgb(255 126 53 / 0.28);
+}
+
+.clip-menu-group[hidden] {
+  display: none;
+}
+
+/* The stretches the cuts removed, shown on the tracks that still draw their
+   whole contents. */
+.lane-gap {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  bottom: 0;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgb(0 0 0 / 0.62) 0 5px,
+      rgb(0 0 0 / 0.78) 5px 10px
+    );
+  pointer-events: none;
 }
