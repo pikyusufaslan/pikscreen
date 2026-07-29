@@ -50,6 +50,10 @@ const ALT_REPEAT_GAP: Duration = Duration::from_millis(45);
 // A guide must always self-expire even if a keyboard event is lost.
 const GUIDE_MAX_DURATION_MS: &str = "3000";
 const RECORDING_COUNTDOWN_MS: &str = "3000";
+/// x264 keeps a VBV window even when it is running to a quality target, so this
+/// is a ceiling the encoder must not be squeezed by rather than a rate to aim
+/// for. The intermediate is re-encoded at export, so leaving it high costs disk
+/// for a few minutes and nothing else.
 const PORTAL_INTERMEDIATE_MAX_BITRATE_KBPS: u32 = 100_000;
 mod audio;
 mod cursor_samples;
@@ -196,6 +200,24 @@ enum CaptureBackend {
 }
 
 impl CaptureBackend {
+    /// Quantizer, x264 preset and VBV ceiling for the file a recording is
+    /// captured into. Both backends write an intermediate the export re-encodes
+    /// from, so neither may be given a ceiling low enough to become the rate
+    /// the encoder works to.
+    fn intermediate_encoder_profile(self, quality: VideoQuality) -> (u32, &'static str, u32) {
+        match self {
+            Self::Portal => quality.portal_intermediate_profile(),
+            Self::Niri => {
+                let (quantizer, preset) = quality.encoder_profile();
+                (
+                    quantizer.parse().unwrap_or(18),
+                    preset,
+                    PORTAL_INTERMEDIATE_MAX_BITRATE_KBPS,
+                )
+            }
+        }
+    }
+
     fn cursor_strategy(
         self,
         available_modes: BitFlags<CursorMode>,
@@ -1067,13 +1089,9 @@ pub fn start_recording(
         let preferred_profile = preview.portal_profile.ok_or_else(|| {
             "The selected source has no verified portal PipeWire profile.".to_owned()
         })?;
-        let (quantizer, preset, max_bitrate_kbps) = match preview.backend {
-            CaptureBackend::Portal => settings.quality.portal_intermediate_profile(),
-            CaptureBackend::Niri => {
-                let (quantizer, preset) = settings.quality.encoder_profile();
-                (quantizer.parse().unwrap_or(18), preset, 2_048)
-            }
-        };
+        let (quantizer, preset, max_bitrate_kbps) = preview
+            .backend
+            .intermediate_encoder_profile(settings.quality);
         let mut profiles = vec![preferred_profile];
         for profile in preview.backend.pipeline_profiles() {
             if !profiles.contains(&profile) {
@@ -2607,6 +2625,27 @@ mod tests {
         assert_eq!(settings.cursor_smoothing, 100);
         assert_eq!(settings.cursor_size, 100);
         assert_eq!(settings.zoom_scale, 1.8);
+    }
+
+    /// The niri path recorded 1080p120 into a 2048 kbps ceiling. x264 holds a
+    /// VBV window even in quality mode, so that ceiling became the rate: every
+    /// second of a moving screen came out at 2040-2060 kbps with keyframes
+    /// crushed to 5 KB, and the quality swung between them visibly.
+    #[test]
+    fn no_backend_records_into_a_bitrate_ceiling_it_can_reach() {
+        for backend in [CaptureBackend::Niri, CaptureBackend::Portal] {
+            for quality in [
+                VideoQuality::Balanced,
+                VideoQuality::High,
+                VideoQuality::Ultra,
+            ] {
+                let (_, _, ceiling) = backend.intermediate_encoder_profile(quality);
+                assert!(
+                    ceiling >= 50_000,
+                    "{backend:?} at {quality:?} caps the intermediate at {ceiling} kbps"
+                );
+            }
+        }
     }
 
     #[test]
