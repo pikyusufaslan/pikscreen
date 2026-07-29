@@ -994,12 +994,21 @@ async function setupEditor() {
     syncMarkerPanel();
     syncTimeline();
   };
+  // "Preview" is the idle state and says nothing worth a line in the title bar,
+  // so the status only appears when something is happening or wrong.
+  const setVideoStatus = (text: string) => {
+    videoStatus.textContent = text;
+    videoStatus.hidden = text === "Preview";
+  };
   const syncPreviewVolume = () => {
     const level = Math.max(0, Math.min(1, previewVolumeLevel));
     video.volume = level;
     audioPreview.volume = level;
-    volume.classList.toggle("muted", video.muted || level === 0);
-    volume.setAttribute("aria-label", video.muted || level === 0 ? "Unmute preview" : "Mute preview");
+    const silent = video.muted || level === 0;
+    volume.classList.toggle("muted", silent);
+    const icon = volume.querySelector("i");
+    if (icon) icon.className = silent ? "ph ph-speaker-slash" : "ph ph-speaker-high";
+    volume.setAttribute("aria-label", silent ? "Unmute preview" : "Mute preview");
   };
   const syncMarkerPanel = () => {
     const marker = selected();
@@ -1269,7 +1278,7 @@ async function setupEditor() {
         ? video.currentTime
         : Number(playhead.value || session.trimStartMs) / 1000;
       const muted = video.muted;
-      videoStatus.textContent = "Refreshing preview…";
+      setVideoStatus("Refreshing preview…");
       stopLiveFrames();
       audioPreview.pause();
       webcamPreview.pause();
@@ -1285,7 +1294,7 @@ async function setupEditor() {
       syncSidecarTime(true);
       updateLivePreview();
       previewNeedsRefresh = false;
-      videoStatus.textContent = "Preview";
+      setVideoStatus("Preview");
     })().finally(() => {
       previewRefresh = null;
     });
@@ -1668,7 +1677,7 @@ async function setupEditor() {
       await video.play();
     } catch (error) {
       previewNeedsRefresh = true;
-      videoStatus.textContent = `Preview unavailable: ${String(error)}`;
+      setVideoStatus(`Preview unavailable: ${String(error)}`);
     }
   });
   video.addEventListener("play", () => {
@@ -1681,7 +1690,7 @@ async function setupEditor() {
   });
   video.addEventListener("playing", () => {
     previewNeedsRefresh = false;
-    videoStatus.textContent = "Preview";
+    setVideoStatus("Preview");
   });
   video.addEventListener("pause", () => {
     play.classList.remove("playing");
@@ -1696,13 +1705,13 @@ async function setupEditor() {
     updateLivePreview();
   });
   video.addEventListener("stalled", () => {
-    videoStatus.textContent = "Preview stalled";
+    setVideoStatus("Preview stalled");
   });
   video.addEventListener("waiting", () => {
-    videoStatus.textContent = "Buffering preview…";
+    setVideoStatus("Buffering preview…");
   });
   video.addEventListener("canplay", () => {
-    if (!previewRefresh) videoStatus.textContent = "Preview";
+    if (!previewRefresh) setVideoStatus("Preview");
   });
   skipBack.addEventListener("click", () => {
     video.currentTime = Math.max(session.trimStartMs / 1000, video.currentTime - 5);
@@ -1732,7 +1741,7 @@ async function setupEditor() {
     // survived it, so ask the element instead of the clock.
     if (hiddenAt !== null && previewMediaIsStale()) {
       previewNeedsRefresh = true;
-      videoStatus.textContent = "Preview ready to refresh";
+      setVideoStatus("Preview ready to refresh");
     }
     hiddenAt = null;
   };
@@ -1861,10 +1870,10 @@ async function setupEditor() {
     stopProcessingProgress();
     stopProcessingProgress = null;
   }
-  video.addEventListener("loadeddata", () => { videoStatus.textContent = "Preview"; });
+  video.addEventListener("loadeddata", () => { setVideoStatus("Preview"); });
   video.addEventListener("error", () => {
     previewNeedsRefresh = true;
-    videoStatus.textContent = "Preview unavailable";
+    setVideoStatus("Preview unavailable");
   });
 
   try {
@@ -1880,7 +1889,7 @@ async function setupEditor() {
       return label;
     }));
     syncSession(session);
-    videoStatus.textContent = "Preview";
+    setVideoStatus("Preview");
   } catch (error) {
     saveState.textContent = `Could not load session: ${String(error)}`;
   }

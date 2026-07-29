@@ -239,11 +239,10 @@
 
           </div>
           <div class="editor-project-name">
-            <span class="project-dot"></span>
             <span class="brand-wordmark brand-wordmark--editor">
               <img src="/src/assets/pikscreen-wordmark-transparent.png" alt="PikScreen" />
             </span>
-            <small id="editor-video-status">Loading preview...</small>
+            <small id="editor-video-status" hidden></small>
           </div>
           <div class="editor-topbar-side editor-topbar-right">
             <span id="editor-save-state" class="editor-save-state">Saved</span>
@@ -372,11 +371,10 @@
               <button id="editor-skip-forward" class="icon-button" type="button" aria-label="Forward five seconds"><i class="ph ph-skip-forward"></i></button>
               <output id="editor-duration">00:00.0</output>
               <span class="playback-divider"></span>
-              <label class="editor-preview-volume" title="Preview volume only">
-                <i class="ph ph-speaker-high" aria-hidden="true"></i>
+              <div class="editor-preview-volume" title="Preview volume only">
+                <button id="editor-volume" class="volume-toggle" type="button" aria-label="Mute preview"><i class="ph ph-speaker-high" aria-hidden="true"></i></button>
                 <input id="editor-preview-volume" type="range" min="0" max="100" value="100" aria-label="Preview volume" />
-              </label>
-              <button id="editor-volume" class="icon-button" type="button" aria-label="Mute preview"><i class="ph ph-speaker-high"></i></button>
+              </div>
             </div>
             <button id="editor-add-marker-toolbar" class="preview-add-zoom" type="button"><i class="ph ph-plus"></i> Add zoom</button>
           </main>

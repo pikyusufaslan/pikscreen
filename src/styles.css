@@ -1286,28 +1286,18 @@ body[data-surface="editor"] .settings-shell {
 
 .editor-project-name {
   display: grid;
-  grid-template-columns: 7px 116px;
   grid-template-rows: auto auto;
-  align-items: center;
-  column-gap: 8px;
-  text-align: left;
-}
-
-.project-dot {
-  width: 7px;
-  height: 7px;
-  grid-row: 1 / 3;
-  border-radius: 50%;
-  background: var(--success);
+  justify-items: center;
+  text-align: center;
 }
 
 .brand-wordmark--editor {
-  width: 116px;
-  height: 27px;
+  width: 134px;
+  height: 31px;
 }
 
 .brand-wordmark--editor img {
-  width: 168px;
+  width: 194px;
 }
 
 .editor-project-name small {
@@ -2832,3 +2822,35 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
   display: none;
 }
 
+
+/* The mute toggle sits with the slider it belongs to rather than trailing it as
+   a second, separate control. */
+.editor-preview-volume {
+  display: inline-flex;
+  /* The toggle moved inside, so the row sizes to what it holds rather than the
+     width the icon and slider used to need. */
+  width: auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.volume-toggle {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-soft);
+  background: transparent;
+  font-size: 15px;
+}
+
+.volume-toggle:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.volume-toggle.muted {
+  color: var(--quiet);
+}
