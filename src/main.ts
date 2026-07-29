@@ -1056,6 +1056,7 @@ async function setupEditor() {
     mode: "move" | "start" | "end",
     region: HTMLElement,
   ) => {
+    let live = region;
     event.preventDefault();
     event.stopPropagation();
     pushHistory();
@@ -1065,6 +1066,11 @@ async function setupEditor() {
     const originalDuration = markerTotalDuration(marker);
     const originalEnd = Math.min(session.durationMs, originalStart + originalDuration);
     selectMarker(marker);
+    // Selecting rebuilds the lane, which detaches the element the pointer went
+    // down on: moving that one would move nothing anyone can see. Take the one
+    // that replaced it.
+    const replaced = markerLane.children[session.markers.indexOf(marker)];
+    if (replaced instanceof HTMLElement) live = replaced;
     // Rebuilding the lane on every pointer move destroys and recreates the
     // region being dragged, which is what made it stutter. Move the element
     // that is already on screen, once a frame, and rebuild once at the end.
@@ -1072,8 +1078,8 @@ async function setupEditor() {
     const paint = () => {
       frame = 0;
       const endMs = Math.min(session.durationMs, marker.timeMs + markerTotalDuration(marker));
-      region.style.left = `${(marker.timeMs / session.durationMs) * 100}%`;
-      region.style.width = `${Math.max(1.6, ((endMs - marker.timeMs) / session.durationMs) * 100)}%`;
+      live.style.left = `${(marker.timeMs / session.durationMs) * 100}%`;
+      live.style.width = `${Math.max(1.6, ((endMs - marker.timeMs) / session.durationMs) * 100)}%`;
       updatePlayhead();
       updateLivePreview(marker.timeMs);
     };

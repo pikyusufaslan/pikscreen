@@ -1286,14 +1286,10 @@ body[data-surface="editor"] .settings-shell {
 }
 
 .editor-project-name {
-  position: absolute;
-  top: 50%;
-  left: 50%;
   display: grid;
   grid-template-rows: auto auto;
   justify-items: center;
   text-align: center;
-  transform: translate(-50%, -50%);
 }
 
 .brand-wordmark--editor {
@@ -2628,8 +2624,12 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
 .editor-playback-bar { position: relative; z-index: 8; align-self: center; }
 .editor-scene-viewport { border-color: #45454c; border-radius: 8px; box-shadow: 0 0 0 18px rgb(255 255 255 / .018); }
 .editor-camera-frame { box-shadow: 0 12px 28px rgb(0 0 0 / .44); }
-.editor-focus-preview { border-color: #ecece7; background: rgb(255 255 255 / .04); box-shadow: 0 0 0 9999px rgb(0 0 0 / .18), 0 0 18px rgb(255 255 255 / .14); }
-.editor-focus-preview span { border-color: #ecece7; background: #f0f0eb; box-shadow: 0 0 0 4px rgb(255 255 255 / .16); }
+.editor-focus-preview {
+  border-color: var(--focus-edge);
+  background: rgb(var(--focus-tint) / .16);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / .18), 0 0 18px rgb(var(--focus-tint) / .3);
+}
+.editor-focus-preview span { border-color: #ecece7; background: var(--focus-edge); box-shadow: 0 0 0 4px rgb(var(--focus-tint) / .28); }
 .editor-playback-bar { border-color: #36363b; background: #0a0a0c; box-shadow: none; }
 .play-button { color: #0b0b0c; background: #ededE8; }
 .play-button:hover { background: #fff; }
