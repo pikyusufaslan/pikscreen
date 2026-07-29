@@ -555,6 +555,7 @@ async function setupEditor() {
   const timelineGrid = query<HTMLElement>(".timeline-grid");
   const clipLane = query<HTMLElement>("#editor-clip-lane");
   const splitClip = query<HTMLButtonElement>("#editor-split");
+  const clipMenu = query<HTMLElement>("#editor-clip-menu");
   const deleteClip = query<HTMLButtonElement>("#editor-delete-clip");
   const audioTrackLabel = query<HTMLElement>("#editor-audio-track-label");
   const audioLane = query<HTMLElement>("#editor-audio-lane");
@@ -944,6 +945,67 @@ async function setupEditor() {
     seekPreview(settled);
     updatePlayhead();
   };
+  let copiedSegment: Segment | null = null;
+  // Where a right-click landed, so the menu acts on that piece rather than on
+  // whatever happened to be selected.
+  let menuTimeMs = 0;
+
+  const canPaste = () => {
+    if (!copiedSegment) return false;
+    // Pasting puts footage back into a gap the cuts left. Anything else would
+    // have to overlap a piece that is already there.
+    return !session.segments.some(
+      (segment) =>
+        copiedSegment!.startMs < segment.endMs && segment.startMs < copiedSegment!.endMs,
+    );
+  };
+  const copySelectedSegment = () => {
+    if (selectedSegment === null) return;
+    copiedSegment = { ...session.segments[selectedSegment] };
+  };
+  const pasteSegment = () => {
+    if (!copiedSegment || !canPaste()) return;
+    const restored = { ...copiedSegment };
+    mutate(() => {
+      session.segments.push(restored);
+      session.segments.sort((left, right) => left.startMs - right.startMs);
+      syncTrimToSegments();
+    });
+    selectSegment(session.segments.findIndex((segment) => segment.startMs === restored.startMs));
+  };
+
+  const closeClipMenu = () => {
+    clipMenu.hidden = true;
+  };
+  const openClipMenu = (event: MouseEvent) => {
+    const rect = clipLane.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = (event.clientX - rect.left) / rect.width;
+    menuTimeMs = Math.max(0, Math.min(session.durationMs, ratio * session.durationMs));
+    const under = session.segments.findIndex(
+      (segment) => menuTimeMs >= segment.startMs && menuTimeMs <= segment.endMs,
+    );
+    selectSegment(under < 0 ? null : under);
+
+    clipMenu.querySelectorAll<HTMLButtonElement>("[data-clip-action]").forEach((item) => {
+      const action = item.dataset.clipAction;
+      if (action === "split") item.disabled = segmentAt(menuTimeMs) < 0;
+      if (action === "copy") item.disabled = selectedSegment === null;
+      if (action === "paste") item.disabled = !canPaste();
+      if (action === "delete") {
+        item.disabled = selectedSegment === null || session.segments.length < 2;
+      }
+    });
+
+    clipMenu.hidden = false;
+    // Measure once visible so a menu near the edge folds back into view.
+    const menuRect = clipMenu.getBoundingClientRect();
+    const left = Math.min(event.clientX, window.innerWidth - menuRect.width - 8);
+    const top = Math.min(event.clientY, window.innerHeight - menuRect.height - 8);
+    clipMenu.style.left = `${Math.max(8, left)}px`;
+    clipMenu.style.top = `${Math.max(8, top)}px`;
+  };
+
   const snapshot = (): EditorSnapshot => clone({
     trimStartMs: session.trimStartMs,
     trimEndMs: session.trimEndMs,
@@ -1376,6 +1438,41 @@ async function setupEditor() {
 
   splitClip.addEventListener("click", cutAtPlayhead);
   deleteClip.addEventListener("click", deleteSelectedSegment);
+  // The playhead input covers the lanes to catch drags, so the menu works off
+  // the pointer position rather than whatever element the event landed on.
+  timelineGrid.addEventListener("contextmenu", (event) => {
+    if (!sessionReady) return;
+    event.preventDefault();
+    openClipMenu(event);
+  });
+  clipMenu.addEventListener("click", (event) => {
+    const item = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-clip-action]");
+    if (!item || item.disabled) return;
+    closeClipMenu();
+    switch (item.dataset.clipAction) {
+      case "split":
+        // Cut where the menu was opened, not where the playhead happens to be.
+        playhead.value = String(Math.round(menuTimeMs));
+        updatePlayhead();
+        seekPreview(Math.round(menuTimeMs));
+        cutAtPlayhead();
+        break;
+      case "copy":
+        copySelectedSegment();
+        break;
+      case "paste":
+        pasteSegment();
+        break;
+      case "delete":
+        deleteSelectedSegment();
+        break;
+    }
+  });
+  window.addEventListener("pointerdown", (event) => {
+    if (!clipMenu.hidden && !clipMenu.contains(event.target as Node)) closeClipMenu();
+  });
+  window.addEventListener("blur", closeClipMenu);
+  timelineGrid.addEventListener("scroll", closeClipMenu, true);
   document.addEventListener("keydown", (event) => {
     if (editorDisposed) return;
     const target = event.target as HTMLElement | null;
@@ -1390,6 +1487,22 @@ async function setupEditor() {
     if (control && (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))) {
       event.preventDefault();
       redo.click();
+      return;
+    }
+    if (control && event.key.toLowerCase() === "c") {
+      if (selectedSegment === null) return;
+      event.preventDefault();
+      copySelectedSegment();
+      return;
+    }
+    if (control && event.key.toLowerCase() === "v") {
+      if (!canPaste()) return;
+      event.preventDefault();
+      pasteSegment();
+      return;
+    }
+    if (event.key === "Escape") {
+      closeClipMenu();
       return;
     }
     if (control) return;

@@ -2719,3 +2719,69 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
   .editor-inspector { left: 72px; width: min(280px, calc(100% - 88px)); }
   .editor-preview-column { padding-inline: 14px; }
 }
+
+/* Clip actions, opened by right-clicking the timeline. Follows the editor's
+   panel surfaces: a dark card, hairline border, and the accent reserved for
+   the destructive entry. */
+.clip-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 208px;
+  padding: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 0.52);
+}
+
+.clip-menu[hidden] {
+  display: none;
+}
+
+.clip-menu button {
+  display: flex;
+  width: 100%;
+  padding: 7px 9px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+}
+
+.clip-menu button span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clip-menu button kbd {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-family: inherit;
+  letter-spacing: 0.04em;
+}
+
+.clip-menu button:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.clip-menu button:disabled {
+  color: var(--text-dim);
+  opacity: 0.45;
+}
+
+.clip-menu button.danger:hover:not(:disabled) {
+  color: #ffd9d9;
+  background: rgb(214 76 76 / 0.18);
+}
+
+.clip-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
