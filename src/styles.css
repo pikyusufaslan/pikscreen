@@ -1966,6 +1966,13 @@ body[data-surface="editor"] .settings-shell {
   font-weight: 600;
 }
 
+.clip-region.selected {
+  border-color: var(--accent);
+  color: #f4f6fa;
+  background: rgb(86 194 136 / 0.26);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
 .clip-region > span:nth-child(2) {
   display: inline-flex;
   align-items: center;

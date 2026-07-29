@@ -325,6 +325,7 @@ struct EditorSessionInfo {
     duration_ms: u64,
     trim_start_ms: u64,
     trim_end_ms: u64,
+    segments: Vec<editor::Segment>,
     markers: Vec<zoom::Marker>,
     cursor_samples: Vec<cursor::CursorSample>,
     click_samples: Vec<portal::ClickSample>,
@@ -371,6 +372,16 @@ fn editor_session_info(session: editor::SessionManifest) -> Result<EditorSession
         duration_ms: session.duration_ms,
         trim_start_ms: session.trim_start_ms,
         trim_end_ms: session.trim_end_ms,
+        // A manifest written before cutting existed carries no segments; the
+        // trim range it does carry says the same thing.
+        segments: if session.segments.is_empty() {
+            vec![editor::Segment {
+                start_ms: session.trim_start_ms,
+                end_ms: session.trim_end_ms,
+            }]
+        } else {
+            session.segments.clone()
+        },
         markers: session.markers,
         cursor_samples: session.cursor_samples,
         click_samples: session.click_samples,
