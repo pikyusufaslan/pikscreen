@@ -200,24 +200,6 @@ enum CaptureBackend {
 }
 
 impl CaptureBackend {
-    /// Quantizer, x264 preset and VBV ceiling for the file a recording is
-    /// captured into. Both backends write an intermediate the export re-encodes
-    /// from, so neither may be given a ceiling low enough to become the rate
-    /// the encoder works to.
-    fn intermediate_encoder_profile(self, quality: VideoQuality) -> (u32, &'static str, u32) {
-        match self {
-            Self::Portal => quality.portal_intermediate_profile(),
-            Self::Niri => {
-                let (quantizer, preset) = quality.encoder_profile();
-                (
-                    quantizer.parse().unwrap_or(18),
-                    preset,
-                    PORTAL_INTERMEDIATE_MAX_BITRATE_KBPS,
-                )
-            }
-        }
-    }
-
     fn cursor_strategy(
         self,
         available_modes: BitFlags<CursorMode>,
@@ -611,7 +593,12 @@ impl VideoQuality {
         (crf, "ultrafast")
     }
 
-    fn portal_intermediate_profile(self) -> (u32, &'static str, u32) {
+    /// Quantizer, x264 preset and VBV ceiling for the file a recording is
+    /// captured into. The preset has to hold the capture rate on the machine
+    /// doing the capturing, and the ceiling has to stay out of the encoder's
+    /// way, because the export re-encodes from this file rather than shipping
+    /// it.
+    fn intermediate_profile(self) -> (u32, &'static str, u32) {
         let quantizer = match self {
             Self::Balanced => 14,
             Self::High => 12,
@@ -1089,9 +1076,11 @@ pub fn start_recording(
         let preferred_profile = preview.portal_profile.ok_or_else(|| {
             "The selected source has no verified portal PipeWire profile.".to_owned()
         })?;
-        let (quantizer, preset, max_bitrate_kbps) = preview
-            .backend
-            .intermediate_encoder_profile(settings.quality);
+        // Both backends record the same intermediate for the same export to
+        // read, so they encode it the same way. They used not to: the niri path
+        // asked for a slower preset than the capture rate allowed and squeezed
+        // it through a 2048 kbps ceiling.
+        let (quantizer, preset, max_bitrate_kbps) = settings.quality.intermediate_profile();
         let mut profiles = vec![preferred_profile];
         for profile in preview.backend.pipeline_profiles() {
             if !profiles.contains(&profile) {
@@ -2632,19 +2621,24 @@ mod tests {
     /// second of a moving screen came out at 2040-2060 kbps with keyframes
     /// crushed to 5 KB, and the quality swung between them visibly.
     #[test]
-    fn no_backend_records_into_a_bitrate_ceiling_it_can_reach() {
-        for backend in [CaptureBackend::Niri, CaptureBackend::Portal] {
-            for quality in [
-                VideoQuality::Balanced,
-                VideoQuality::High,
-                VideoQuality::Ultra,
-            ] {
-                let (_, _, ceiling) = backend.intermediate_encoder_profile(quality);
-                assert!(
-                    ceiling >= 50_000,
-                    "{backend:?} at {quality:?} caps the intermediate at {ceiling} kbps"
-                );
-            }
+    fn no_quality_records_into_a_bitrate_ceiling_it_can_reach() {
+        for quality in [
+            VideoQuality::Balanced,
+            VideoQuality::High,
+            VideoQuality::Ultra,
+        ] {
+            let (_, preset, ceiling) = quality.intermediate_profile();
+            assert!(
+                ceiling >= 50_000,
+                "{quality:?} caps the intermediate at {ceiling} kbps"
+            );
+            // Measured on this machine at 1880x982, worst case content: medium
+            // sustained 73 FPS where veryfast sustained 127. A recording
+            // profile goes up to 180.
+            assert!(
+                matches!(preset, "ultrafast" | "superfast" | "veryfast"),
+                "{quality:?} records with {preset}, which cannot hold a high capture rate"
+            );
         }
     }
 
@@ -2685,17 +2679,17 @@ mod tests {
     }
 
     #[test]
-    fn portal_capture_uses_a_high_quality_realtime_intermediate() {
+    fn capture_uses_a_high_quality_realtime_intermediate() {
         assert_eq!(
-            VideoQuality::Balanced.portal_intermediate_profile(),
+            VideoQuality::Balanced.intermediate_profile(),
             (14, "veryfast", 100_000)
         );
         assert_eq!(
-            VideoQuality::High.portal_intermediate_profile(),
+            VideoQuality::High.intermediate_profile(),
             (12, "veryfast", 100_000)
         );
         assert_eq!(
-            VideoQuality::Ultra.portal_intermediate_profile(),
+            VideoQuality::Ultra.intermediate_profile(),
             (10, "veryfast", 100_000)
         );
     }
