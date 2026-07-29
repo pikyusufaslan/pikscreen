@@ -133,6 +133,7 @@ pub(super) fn render_final_video(
     height: u32,
     duration_ms: u64,
     segments: &[Segment],
+    audio_segments: &[Segment],
     cursor_strategy: CursorStrategy,
     settings: RecordingSettings,
 ) -> Result<(), String> {
@@ -287,6 +288,7 @@ pub(super) fn render_final_video(
         &stage_label,
         audio_path.is_some().then_some(audio_input_index),
         segments,
+        audio_segments,
     );
     let output_duration_ms: u64 = segments.iter().map(Segment::duration_ms).sum();
     let fps = settings.fps_argument();
@@ -427,6 +429,7 @@ pub(super) fn append_segment_filter(
     stage_label: &str,
     audio_input_index: Option<usize>,
     segments: &[Segment],
+    audio_segments: &[Segment],
 ) {
     let seconds = |ms: u64| ms as f64 / 1_000.0;
 
@@ -459,6 +462,7 @@ pub(super) fn append_segment_filter(
     let Some(audio_input_index) = audio_input_index else {
         return;
     };
+    let segments = audio_segments;
     if let [only] = segments {
         filter.push_str(&format!(
             ";[{audio_input_index}:a:0]atrim=start={:.6}:end={:.6},asetpts=PTS-STARTPTS[out_audio]",
@@ -2312,15 +2316,11 @@ mod tests {
     #[test]
     fn one_segment_renders_as_the_single_trim_it_always_was() {
         let mut filter = "[scene]null[stage]".to_owned();
-        append_segment_filter(
-            &mut filter,
-            "stage",
-            Some(3),
-            &[Segment {
-                start_ms: 1_250,
-                end_ms: 4_750,
-            }],
-        );
+        let cuts = &[Segment {
+            start_ms: 1_250,
+            end_ms: 4_750,
+        }];
+        append_segment_filter(&mut filter, "stage", Some(3), cuts, cuts);
         assert!(filter.contains(
             "[stage]trim=start=1.250000:end=4.750000,setpts=PTS-STARTPTS,format=yuv420p[out]"
         ));
@@ -2334,21 +2334,17 @@ mod tests {
     #[test]
     fn cuts_are_stitched_back_together_in_order() {
         let mut filter = "[scene]null[stage]".to_owned();
-        append_segment_filter(
-            &mut filter,
-            "stage",
-            Some(3),
-            &[
-                Segment {
-                    start_ms: 0,
-                    end_ms: 1_000,
-                },
-                Segment {
-                    start_ms: 4_000,
-                    end_ms: 6_500,
-                },
-            ],
-        );
+        let cuts = &[
+            Segment {
+                start_ms: 0,
+                end_ms: 1_000,
+            },
+            Segment {
+                start_ms: 4_000,
+                end_ms: 6_500,
+            },
+        ];
+        append_segment_filter(&mut filter, "stage", Some(3), cuts, cuts);
 
         assert!(filter.contains("[stage]split=2[seg0][seg1]"));
         assert!(filter.contains("[seg0]trim=start=0.000000:end=1.000000,setpts=PTS-STARTPTS[cut0]"));
@@ -2361,23 +2357,52 @@ mod tests {
     }
 
     #[test]
-    fn a_silent_recording_gets_no_audio_branch() {
+    fn detached_audio_is_cut_where_the_audio_was_cut() {
         let mut filter = "[scene]null[stage]".to_owned();
         append_segment_filter(
             &mut filter,
             "stage",
-            None,
+            Some(3),
+            &[Segment {
+                start_ms: 0,
+                end_ms: 6_000,
+            }],
             &[
                 Segment {
                     start_ms: 0,
                     end_ms: 1_000,
                 },
                 Segment {
-                    start_ms: 2_000,
-                    end_ms: 3_000,
+                    start_ms: 3_000,
+                    end_ms: 6_000,
                 },
             ],
         );
+
+        // The picture keeps its single stretch...
+        assert!(filter.contains(
+            "[stage]trim=start=0.000000:end=6.000000,setpts=PTS-STARTPTS,format=yuv420p[out]"
+        ));
+        // ...while the audio is stitched from its own two.
+        assert!(filter.contains("[3:a:0]asplit=2[aseg0][aseg1]"));
+        assert!(filter.contains("[aseg1]atrim=start=3.000000:end=6.000000"));
+        assert!(filter.contains("[acut0][acut1]concat=n=2:v=0:a=1[out_audio]"));
+    }
+
+    #[test]
+    fn a_silent_recording_gets_no_audio_branch() {
+        let mut filter = "[scene]null[stage]".to_owned();
+        let cuts = &[
+            Segment {
+                start_ms: 0,
+                end_ms: 1_000,
+            },
+            Segment {
+                start_ms: 2_000,
+                end_ms: 3_000,
+            },
+        ];
+        append_segment_filter(&mut filter, "stage", None, cuts, cuts);
 
         assert!(filter.contains("concat=n=2:v=1:a=0"));
         assert!(!filter.contains("out_audio"));

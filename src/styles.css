@@ -1373,10 +1373,16 @@ body[data-surface="editor"] .settings-shell {
   background: var(--surface-3);
 }
 
+/* The selected tool reads as the inverse of the rail rather than carrying a
+   marker beside it. */
 .editor-tool.active {
-  color: #dce6ff;
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 var(--accent);
+  color: var(--surface-1);
+  background: var(--text);
+}
+
+.editor-tool.active:hover {
+  color: var(--surface-1);
+  background: var(--text);
 }
 
 .editor-inspector {

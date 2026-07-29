@@ -2079,10 +2079,12 @@ pub(crate) fn render_editor_session(
 ) -> Result<(), String> {
     changes.validate(session.duration_ms)?;
     let segments = changes.segments();
+    let audio_segments = changes.audio_segments();
     session.markers = changes.markers;
     session.trim_start_ms = changes.trim_start_ms;
     session.trim_end_ms = changes.trim_end_ms;
     session.segments = segments.clone();
+    session.audio_segments = changes.audio_segments.clone();
     session.settings = changes.settings.validate()?;
 
     let events = build_zoom_events(&session.markers, session.settings.zoom_timing());
@@ -2102,6 +2104,7 @@ pub(crate) fn render_editor_session(
         session.height,
         session.duration_ms,
         &segments,
+        &audio_segments,
         if session.synthetic_cursor {
             CursorStrategy::SyntheticTahoe
         } else {

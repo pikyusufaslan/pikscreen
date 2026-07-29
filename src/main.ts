@@ -155,6 +155,7 @@ type EditorSession = {
   trimStartMs: number;
   trimEndMs: number;
   segments: Segment[];
+  audioSegments: Segment[];
   markers: ZoomMarker[];
   cursorSamples: CursorSample[];
   clickSamples: ClickSample[];
@@ -172,9 +173,13 @@ type EditorChanges = {
   trimStartMs: number;
   trimEndMs: number;
   segments: Segment[];
+  audioSegments: Segment[];
   settings: RecordingSettings;
 };
-type EditorSnapshot = Pick<EditorSession, "trimStartMs" | "trimEndMs" | "segments" | "markers" | "settings">;
+type EditorSnapshot = Pick<
+  EditorSession,
+  "trimStartMs" | "trimEndMs" | "segments" | "audioSegments" | "markers" | "settings"
+>;
 
 function formatElapsed(milliseconds: number) {
   const tenths = Math.floor(milliseconds / 100) % 10;
@@ -595,6 +600,7 @@ async function setupEditor() {
   const customBackground = query<HTMLButtonElement>("#editor-custom-background");
   const customBackgroundName = query<HTMLElement>("#editor-custom-background-name");
   const backgroundEnabled = query<HTMLInputElement>("#editor-background-enabled");
+  const audioDetached = query<HTMLInputElement>("#editor-audio-detached");
   const cursorVisible = query<HTMLInputElement>("#editor-cursor-visible");
   const cursorSize = query<HTMLInputElement>("#editor-cursor-size");
   const cursorSizeOutput = query<HTMLOutputElement>("#editor-cursor-size-output");
@@ -1010,6 +1016,7 @@ async function setupEditor() {
     trimStartMs: session.trimStartMs,
     trimEndMs: session.trimEndMs,
     segments: session.segments,
+    audioSegments: session.audioSegments,
     markers: session.markers,
     settings: session.settings,
   });
@@ -1027,6 +1034,7 @@ async function setupEditor() {
     session.trimStartMs = next.trimStartMs;
     session.trimEndMs = next.trimEndMs;
     session.segments = clone(next.segments);
+    session.audioSegments = clone(next.audioSegments ?? []);
     selectedSegment = null;
     session.markers = clone(next.markers);
     session.settings = clone(next.settings);
@@ -1175,7 +1183,7 @@ async function setupEditor() {
     // A ResizeObserver fires as soon as it starts observing, which is before
     // the session has loaded.
     if (!sessionReady) return;
-    const hasAudioTrack = Boolean(session.audioUrl);
+    const hasAudioTrack = Boolean(session.audioUrl) && session.audioSegments.length > 0;
     audioTrackLabel.hidden = !hasAudioTrack;
     audioLane.hidden = !hasAudioTrack;
     timelineGrid.classList.toggle("audio-present", hasAudioTrack);
@@ -1236,6 +1244,8 @@ async function setupEditor() {
     syncEditorBackgroundGallery();
     customBackgroundName.textContent = session.settings.customBackgroundPath?.split("/").pop() ?? "No custom image";
     backgroundEnabled.checked = session.settings.backgroundEnabled !== false;
+    audioDetached.checked = session.audioSegments.length > 0;
+    audioDetached.disabled = !session.audioUrl;
     cursorVisible.checked = session.settings.cursorVisible;
     cursorSize.value = String(session.settings.cursorSize);
     cursorSizeOutput.value = `${session.settings.cursorSize}%`;
@@ -1280,6 +1290,8 @@ async function setupEditor() {
     if (!Array.isArray(session.segments) || session.segments.length === 0) {
       session.segments = [{ startMs: session.trimStartMs, endMs: session.trimEndMs }];
     }
+    // Empty means the sound is cut wherever the picture is.
+    if (!Array.isArray(session.audioSegments)) session.audioSegments = [];
     selectedSegment = null;
     sessionReady = true;
     aspectLabel.innerHTML = `<i class="ph ph-monitor"></i> ${next.width} × ${next.height}`;
@@ -1615,6 +1627,12 @@ async function setupEditor() {
     session.settings.background = background.value as RecordingSettings["background"];
     session.settings.customBackgroundPath = null;
   }));
+  audioDetached.addEventListener("change", () => mutate(() => {
+    // Detaching copies the picture's cuts so the sound starts where it is now
+    // and diverges only where it is cut afterwards. Reattaching drops them and
+    // the sound follows the picture again.
+    session.audioSegments = audioDetached.checked ? clone(session.segments) : [];
+  }));
   backgroundEnabled.addEventListener("change", () => mutate(() => {
     session.settings.backgroundEnabled = backgroundEnabled.checked;
   }));
@@ -1749,6 +1767,31 @@ async function setupEditor() {
   timelineGrid.addEventListener("pointerdown", (event) => {
     const target = event.target as HTMLElement;
     if (!target.closest(".recordly-zoom-region")) selectMarker(null);
+    if (!sessionReady || event.button !== 0) return;
+    // Reaching a moment used to mean hitting the thin strip above the tracks.
+    // Anywhere along the lanes moves the playhead now, except on the pieces
+    // that carry their own drag: zoom regions and the trim handles.
+    if (target.closest(".recordly-zoom-region, .trim-handle")) return;
+    const rect = markerLane.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const seekTo = (clientX: number) => {
+      const ratio = (clientX - rect.left) / rect.width;
+      const at = clampToTrim(
+        Math.round(Math.max(0, Math.min(1, ratio)) * session.durationMs),
+      );
+      playhead.value = String(at);
+      updatePlayhead();
+      updateLivePreview(at);
+      seekPreview(at);
+    };
+    seekTo(event.clientX);
+    const move = (next: PointerEvent) => seekTo(next.clientX);
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
   });
   video.addEventListener("timeupdate", () => {
     if (!video.paused || playhead.matches(":active")) return;
@@ -1939,6 +1982,7 @@ async function setupEditor() {
           trimStartMs: session.trimStartMs,
           trimEndMs: session.trimEndMs,
           segments: session.segments,
+          audioSegments: session.audioSegments,
           settings: session.settings,
         } satisfies EditorChanges,
       });

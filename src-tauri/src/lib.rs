@@ -326,6 +326,7 @@ struct EditorSessionInfo {
     trim_start_ms: u64,
     trim_end_ms: u64,
     segments: Vec<editor::Segment>,
+    audio_segments: Vec<editor::Segment>,
     markers: Vec<zoom::Marker>,
     cursor_samples: Vec<cursor::CursorSample>,
     click_samples: Vec<portal::ClickSample>,
@@ -382,6 +383,7 @@ fn editor_session_info(session: editor::SessionManifest) -> Result<EditorSession
         } else {
             session.segments.clone()
         },
+        audio_segments: session.audio_segments.clone(),
         markers: session.markers,
         cursor_samples: session.cursor_samples,
         click_samples: session.click_samples,

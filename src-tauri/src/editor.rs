@@ -26,6 +26,9 @@ pub struct SessionManifest {
     pub trim_end_ms: u64,
     #[serde(default)]
     pub segments: Vec<Segment>,
+    /// Empty while the audio follows the picture's cuts.
+    #[serde(default)]
+    pub audio_segments: Vec<Segment>,
     pub settings: RecordingSettings,
     pub markers: Vec<Marker>,
     pub cursor_samples: Vec<CursorSample>,
@@ -61,6 +64,9 @@ pub struct EditorChanges {
     /// Empty from a client that predates cutting, which means the trim range.
     #[serde(default)]
     pub segments: Vec<Segment>,
+    /// Empty while the audio follows the picture's cuts, which is the default.
+    #[serde(default)]
+    pub audio_segments: Vec<Segment>,
     pub settings: RecordingSettings,
 }
 
@@ -80,11 +86,26 @@ impl EditorChanges {
         }
     }
 
+    /// What the audio should stitch together. Detaching gives it its own cuts;
+    /// until then it is cut exactly where the picture is.
+    pub fn audio_segments(&self) -> Vec<Segment> {
+        if self.audio_segments.is_empty() {
+            self.segments()
+        } else {
+            self.audio_segments.clone()
+        }
+    }
+
     pub fn validate(&self, duration_ms: u64) -> Result<(), String> {
         if self.trim_start_ms >= self.trim_end_ms || self.trim_end_ms > duration_ms {
             return Err("Editor trim range must stay inside the recording.".to_owned());
         }
         let mut previous_end = 0;
+        for segment in self.segments.iter().chain(self.audio_segments.iter()) {
+            if segment.start_ms >= segment.end_ms || segment.end_ms > duration_ms {
+                return Err("Editor cut must stay inside the recording.".to_owned());
+            }
+        }
         for segment in &self.segments {
             if segment.start_ms >= segment.end_ms || segment.end_ms > duration_ms {
                 return Err("Editor cut must stay inside the recording.".to_owned());
@@ -195,6 +216,7 @@ fn create_session_in_directory(
             start_ms: 0,
             end_ms: duration_ms,
         }],
+        audio_segments: Vec::new(),
         trim_end_ms: duration_ms,
         settings,
         markers,
@@ -268,6 +290,7 @@ mod tests {
     fn changes_with(segments: Vec<Segment>) -> EditorChanges {
         EditorChanges {
             segments,
+            audio_segments: Vec::new(),
             markers: Vec::new(),
             trim_start_ms: 0,
             trim_end_ms: 100,
@@ -341,6 +364,7 @@ mod tests {
     fn rejects_marker_outside_frame() {
         let changes = EditorChanges {
             segments: Vec::new(),
+            audio_segments: Vec::new(),
             markers: vec![Marker {
                 time_ms: 10,
                 x: 1.1,
