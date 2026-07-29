@@ -1733,15 +1733,33 @@ async function setupEditor() {
     syncSidecarTime(true);
     updateLivePreview();
   });
+  // WebKit fires "stalled" while it reopens the file after an ordinary seek, so
+  // a stall only earns a line once it has lasted and the element still has
+  // nothing to show.
+  let stallNotice = 0;
+  const clearStallNotice = () => {
+    if (!stallNotice) return;
+    window.clearTimeout(stallNotice);
+    stallNotice = 0;
+  };
   video.addEventListener("stalled", () => {
-    setVideoStatus("Preview stalled");
+    if (stallNotice) return;
+    stallNotice = window.setTimeout(() => {
+      stallNotice = 0;
+      if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+        setVideoStatus("Preview stalled");
+      }
+    }, 1200);
   });
   video.addEventListener("waiting", () => {
     setVideoStatus("Buffering preview…");
   });
   video.addEventListener("canplay", () => {
+    clearStallNotice();
     if (!previewRefresh) setVideoStatus("Preview");
   });
+  video.addEventListener("playing", clearStallNotice);
+  video.addEventListener("seeked", clearStallNotice);
   skipBack.addEventListener("click", () => {
     video.currentTime = Math.max(session.trimStartMs / 1000, video.currentTime - 5);
   });

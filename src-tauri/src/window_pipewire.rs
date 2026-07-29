@@ -385,11 +385,23 @@ fn recording_pipeline_args(
         // advertises framerate=0/1.  videoconvert and videoscale pass the
         // framerate through untouched, so pinning one here leaves nothing to
         // intersect and the pipeline dies during preroll with
-        // "no more input formats".  The compositor below sets the constant
-        // rate the encoder needs, and force-live keeps it emitting while an
-        // idle window sends no new frames.
+        // "no more input formats".
         format!("video/x-raw,format={raw_format},width={width},height={height}"),
         "!".to_owned(),
+        // videorate turns the damage driven stream into the constant rate the
+        // encoder wants, working from the buffer timestamps.  Without it the
+        // compositor's sink pad inherits framerate=0/1, and a live aggregator
+        // with no input rate stops pacing its output against the clock: it
+        // emits roughly one buffer per arriving frame while still stamping them
+        // one output frame duration apart.  A 95 s window capture that averaged
+        // 44 FPS came out as 34 s of 120 FPS video, playing back at nearly
+        // three times speed.
+        "videorate".to_owned(),
+        "!".to_owned(),
+        format!("video/x-raw,format={raw_format},width={width},height={height},framerate={fps}/1"),
+        "!".to_owned(),
+        // force-live keeps the compositor emitting while an idle window sends
+        // no new frames at all.
         "compositor".to_owned(),
         "force-live=true".to_owned(),
         "start-time-selection=first".to_owned(),
@@ -460,11 +472,15 @@ fn recording_pipeline_args(
 /// A decoder has to start from the previous keyframe, so how far apart they sit
 /// is how much work a seek costs. At two seconds the editor's playhead decoded
 /// up to two seconds of frames for every move and the preview went black in
-/// between. A quarter second keeps scrubbing responsive; this file is only an
-/// intermediate that the final export re-encodes from, so the extra size does
-/// not reach the output.
+/// between.
+///
+/// A quarter second was too far the other way. x264 runs here at a constant
+/// quantizer with no lookahead, so every keyframe is a visible quality step
+/// that the following frames drift away from again; four of them a second read
+/// as a pulse on moving content. One second keeps a seek cheap without putting
+/// that rhythm in the picture.
 fn keyframe_interval(fps: u32) -> u32 {
-    (fps / 4).max(1)
+    fps.max(1)
 }
 
 fn identity_eos_after(output_frames: u32) -> u32 {
@@ -876,8 +892,8 @@ mod tests {
 
             let converter = args
                 .iter()
-                .position(|arg| arg == "compositor")
-                .expect("every profile needs a rate converter for an idle window");
+                .position(|arg| arg == "videorate")
+                .expect("every profile needs a rate converter for a damage driven stream");
             let pinned_before_converter = args[..converter]
                 .iter()
                 .any(|arg| arg.contains("framerate=") || arg.contains("DMABuf"));
@@ -888,6 +904,48 @@ mod tests {
                 profile
             );
             assert!(args.contains(&"force-live=true".to_owned()));
+        }
+    }
+
+    /// A live aggregator only paces its output against the clock when its sink
+    /// pad knows an input rate.  Left at the stream's framerate=0/1 the
+    /// compositor emits about one buffer per arriving frame while stamping them
+    /// a full output frame apart, which compresses the recording's timeline.
+    /// videorate has to establish the rate before the compositor sees it.
+    #[test]
+    fn window_recording_fixes_the_rate_before_the_compositor() {
+        for profile in WindowPipelineProfile::ALL {
+            let args = recording_pipeline_args(
+                7,
+                profile,
+                1_920,
+                1_080,
+                120,
+                18,
+                "medium",
+                2_048,
+                Path::new("/tmp/window.mkv"),
+                None,
+            );
+
+            let videorate = args
+                .iter()
+                .position(|arg| arg == "videorate")
+                .expect("the damage driven stream needs a rate converter");
+            let compositor = args
+                .iter()
+                .position(|arg| arg == "compositor")
+                .expect("an idle window still needs frames emitted");
+            let rate_caps = args
+                .iter()
+                .position(|arg| arg.contains("framerate=120/1"))
+                .expect("the encoder needs a constant rate");
+
+            assert!(
+                videorate < rate_caps && rate_caps < compositor,
+                "{:?} leaves the compositor without an input rate: {args:?}",
+                profile
+            );
         }
     }
 
@@ -956,10 +1014,10 @@ mod tests {
 
     #[test]
     fn keyframes_stay_close_enough_to_scrub_through() {
-        // A quarter second at each supported rate.
-        assert_eq!(keyframe_interval(120), 30);
-        assert_eq!(keyframe_interval(60), 15);
-        assert_eq!(keyframe_interval(30), 7);
+        // One second at each supported rate.
+        assert_eq!(keyframe_interval(120), 120);
+        assert_eq!(keyframe_interval(60), 60);
+        assert_eq!(keyframe_interval(30), 30);
         // Never zero, whatever the rate.
         assert_eq!(keyframe_interval(1), 1);
         assert_eq!(keyframe_interval(0), 1);
@@ -981,7 +1039,7 @@ mod tests {
                 None,
             );
             assert!(
-                args.contains(&"key-int-max=30".to_owned()),
+                args.contains(&"key-int-max=120".to_owned()),
                 "{profile:?} should carry the scrubbable interval: {args:?}"
             );
         }

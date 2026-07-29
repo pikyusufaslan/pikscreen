@@ -2664,7 +2664,24 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
   object-fit: contain;
   transform: none;
 }
-.editor-project-name { grid-template-columns: 7px 132px; }
+/* One column, and the status hangs below the wordmark instead of taking a row
+   of its own. Two columns put the status beside the wordmark and pushed it out
+   of its cell the moment anything had something to say. */
+.editor-project-name {
+  position: relative;
+  grid-template-columns: 132px;
+  grid-template-rows: auto;
+  padding-left: 7px;
+}
+.editor-project-name small {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-top: 1px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 .zoom-add-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 14px; }
 .zoom-add-actions .secondary-button { min-width: 0; padding-inline: 8px; font-size: 10px; }
