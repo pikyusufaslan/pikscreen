@@ -2603,8 +2603,25 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
 .editor-inspector::after { position: absolute; top: 28px; left: -17px; width: 5px; height: 5px; content: ""; border: 1px solid #727278; border-radius: 50%; background: #101012; }
 .inspector-heading { margin-bottom: 14px; }
 .inspector-heading > span, .inspector-heading > div > span { color: #a7a7ae; }
-.editor-preview-column { padding: 14px 30px 18px; grid-column: 2; grid-row: 1; grid-template-rows: 24px minmax(0, 1fr) 48px; align-content: stretch; border: 0; border-radius: 0; border-bottom: 1px solid #29292e; background: radial-gradient(ellipse at 50% 48%, #1d1d20, #0d0d0f 65%, #09090a); }
-.editor-preview-stage { max-height: min(60vh, 620px); }
+/* The inspector floats over the left of this column, so centring against the
+   full width pushed the recording right and left a band of empty space beside
+   it. Reserving the inspector's own width centres it in what is actually free.
+   The rest is padding and a hint row that were taking space the recording
+   could use. */
+.editor-preview-column {
+  padding: 8px 16px 10px;
+  padding-left: calc(min(296px, 100% - 112px) + 26px);
+  grid-column: 2;
+  grid-row: 1;
+  grid-template-rows: 16px minmax(0, 1fr) 44px;
+  gap: 6px;
+  align-content: stretch;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid #29292e;
+  background: radial-gradient(ellipse at 50% 48%, #1d1d20, #0d0d0f 65%, #09090a);
+}
+.editor-preview-stage { max-height: min(78vh, 1000px); }
 .editor-playback-bar { position: relative; z-index: 8; align-self: center; }
 .editor-scene-viewport { border-color: #45454c; border-radius: 8px; box-shadow: 0 0 0 18px rgb(255 255 255 / .018); }
 .editor-camera-frame { box-shadow: 0 12px 28px rgb(0 0 0 / .44); }
@@ -2822,18 +2839,16 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
   display: none;
 }
 
-/* The stretches the cuts removed, shown on the tracks that still draw their
-   whole contents. */
-.lane-gap {
-  position: absolute;
-  z-index: 6;
-  top: 0;
-  bottom: 0;
-  background:
-    repeating-linear-gradient(
-      135deg,
-      rgb(0 0 0 / 0.62) 0 5px,
-      rgb(0 0 0 / 0.78) 5px 10px
-    );
-  pointer-events: none;
+/* A clip being carried to a new place in the order. */
+.clip-lane.reordering .clip-region {
+  transition: none;
+}
+
+.clip-lane.reordering .clip-region.selected {
+  cursor: grabbing;
+  opacity: 0.86;
+}
+
+.clip-region {
+  cursor: grab;
 }

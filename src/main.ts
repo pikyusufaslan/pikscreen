@@ -639,6 +639,7 @@ async function setupEditor() {
   let sessionReady = false;
   let selectedMarker: number | null = null;
   let selectedSegment: number | null = null;
+  let playingSegment = 0;
   let busy = false;
   let syncEditorBackgroundGallery = () => {};
   let liveFrameRequest = 0;
@@ -665,8 +666,14 @@ async function setupEditor() {
     if (!sessionReady || !session.width || !session.height) return;
     const bounds = previewColumn.getBoundingClientRect();
     if (bounds.width <= 0 || bounds.height <= 0) return;
-    const availableWidth = Math.max(1, bounds.width - 28);
-    const availableHeight = Math.max(1, Math.min(bounds.height - 124, window.innerHeight * 0.60, 620));
+    // Leave room for the hint row and the playback bar, and otherwise let the
+    // recording have the column. The old ceilings held it near half the window
+    // even on a display with plenty to spare.
+    const availableWidth = Math.max(1, bounds.width - 18);
+    const availableHeight = Math.max(
+      1,
+      Math.min(bounds.height - 84, window.innerHeight * 0.78, 1_000),
+    );
     const aspect = session.width / session.height;
     let width = availableWidth;
     let height = width / aspect;
@@ -863,26 +870,26 @@ async function setupEditor() {
         stopLiveFrames();
         return;
       }
-      const atMs = video.currentTime * 1000;
-      const current = session.segments.findIndex(
-        (segment) => atMs >= segment.startMs && atMs < segment.endMs,
-      );
-      if (current < 0 || atMs >= session.segments[current].endMs) {
-        // Past the end of a piece: continue at the next one, or stop if this
-        // was the last.
-        const next = session.segments.find((segment) => segment.startMs > atMs);
-        if (next) {
-          video.currentTime = next.startMs / 1000;
-          syncSidecarTime(true);
-        } else {
+      // The source runs on past the end of whatever clip is playing, so follow
+      // the list: at the end of one, continue at the start of the next.
+      const sourceMs = video.currentTime * 1000;
+      const playing = session.segments[playingSegment] ?? session.segments[0];
+      if (!playing) return;
+      if (sourceMs >= playing.endMs) {
+        const next = session.segments[playingSegment + 1];
+        if (!next) {
           video.pause();
-          video.currentTime = session.trimEndMs / 1000;
           return;
         }
+        playingSegment += 1;
+        video.currentTime = next.startMs / 1000;
+        syncSidecarTime(true);
+        return;
       }
-      playhead.value = String(Math.round(video.currentTime * 1000));
+      const outputMs = outputStartOf(playingSegment) + (sourceMs - playing.startMs);
+      playhead.value = String(Math.round(outputMs));
       updatePlayhead();
-      updateLivePreview();
+      updateLivePreview(Math.round(sourceMs));
       syncSidecarTime();
       if (typeof video.requestVideoFrameCallback === "function") {
         videoFrameRequest = video.requestVideoFrameCallback(() => {
@@ -905,6 +912,87 @@ async function setupEditor() {
   previewResizeObserver.observe(previewColumn);
   const timelineResizeObserver = new ResizeObserver(() => syncTimeline());
   timelineResizeObserver.observe(timelineGrid);
+  // The timeline shows the export: clips laid out in the order they play, not
+  // where they sit in the source. These convert between the two, which is what
+  // lets a clip be moved without its contents moving with it.
+  const outputDuration = () =>
+    session.segments.reduce((total, segment) => total + (segment.endMs - segment.startMs), 0);
+  const outputStartOf = (index: number) =>
+    session.segments
+      .slice(0, index)
+      .reduce((total, segment) => total + (segment.endMs - segment.startMs), 0);
+  const segmentAtOutput = (outputMs: number) => {
+    let elapsed = 0;
+    for (let index = 0; index < session.segments.length; index += 1) {
+      const span = session.segments[index].endMs - session.segments[index].startMs;
+      if (outputMs < elapsed + span) return index;
+      elapsed += span;
+    }
+    return session.segments.length - 1;
+  };
+  const sourceAtOutput = (outputMs: number) => {
+    const index = segmentAtOutput(outputMs);
+    if (index < 0) return 0;
+    const segment = session.segments[index];
+    return segment.startMs + Math.max(0, outputMs - outputStartOf(index));
+  };
+  // A source moment can play more than once; the first appearance is the one
+  // overlays are drawn at.
+  const outputAtSource = (sourceMs: number) => {
+    for (let index = 0; index < session.segments.length; index += 1) {
+      const segment = session.segments[index];
+      if (sourceMs >= segment.startMs && sourceMs <= segment.endMs) {
+        return outputStartOf(index) + (sourceMs - segment.startMs);
+      }
+    }
+    return null;
+  };
+
+  // Holding a clip and moving it sideways changes where it plays, not what it
+  // contains: the list is reordered, the clip keeps its own stretch of source.
+  let draggedClip = false;
+  function beginClipDrag(event: PointerEvent, index: number) {
+    if (event.button !== 0 || session.segments.length < 2) return;
+    const rect = clipLane.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const startX = event.clientX;
+    let from = index;
+    draggedClip = false;
+
+    const move = (next: PointerEvent) => {
+      if (!draggedClip && Math.abs(next.clientX - startX) < 4) return;
+      if (!draggedClip) {
+        draggedClip = true;
+        pushHistory();
+        clipLane.classList.add("reordering");
+      }
+      const at = ((next.clientX - rect.left) / rect.width) * outputDuration();
+      const target = segmentAtOutput(Math.max(0, Math.min(at, outputDuration() - 1)));
+      if (target === from || target < 0) return;
+      const [moved] = session.segments.splice(from, 1);
+      session.segments.splice(target, 0, moved);
+      from = target;
+      selectedSegment = target;
+      markDirty();
+      syncTimeline();
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      clipLane.classList.remove("reordering");
+      if (draggedClip) {
+        syncTrimToSegments();
+        syncAll();
+      }
+      // Let the click that follows know a drag happened, then forget it.
+      window.setTimeout(() => {
+        draggedClip = false;
+      }, 0);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+  }
+
   const selectSegment = (index: number | null) => {
     selectedSegment = index;
     syncTimeline();
@@ -912,26 +1000,33 @@ async function setupEditor() {
   // The trim fields still describe the outer edges of what survives, which is
   // what the rest of the pipeline and older payloads read.
   const syncTrimToSegments = () => {
-    const first = session.segments[0];
-    const last = session.segments[session.segments.length - 1];
-    session.trimStartMs = first.startMs;
-    session.trimEndMs = last.endMs;
+    // Kept for payloads that still read them; with a reorderable list they
+    // describe the outermost source the export touches.
+    session.trimStartMs = Math.min(...session.segments.map((segment) => segment.startMs));
+    session.trimEndMs = Math.max(...session.segments.map((segment) => segment.endMs));
   };
-  const segmentAt = (timeMs: number) =>
-    session.segments.findIndex(
-      (segment) => timeMs > segment.startMs && timeMs < segment.endMs,
-    );
+  // Where a cut would land, or -1 when it would fall on a clip's edge and make
+  // an empty piece.
+  const segmentAt = (outputMs: number) => {
+    const index = segmentAtOutput(outputMs);
+    if (index < 0) return -1;
+    const within = outputMs - outputStartOf(index);
+    const span = session.segments[index].endMs - session.segments[index].startMs;
+    return within > 0 && within < span ? index : -1;
+  };
   const cutAtPlayhead = () => {
     const at = Math.round(Number(playhead.value));
     const index = segmentAt(at);
-    // Cutting exactly on an edge would make an empty piece.
     if (index < 0) return;
+    const source = Math.round(sourceAtOutput(at));
     mutate(() => {
       const segment = session.segments[index];
-      session.segments.splice(index, 1, { startMs: segment.startMs, endMs: at }, {
-        startMs: at,
-        endMs: segment.endMs,
-      });
+      session.segments.splice(
+        index,
+        1,
+        { startMs: segment.startMs, endMs: source },
+        { startMs: source, endMs: segment.endMs },
+      );
       syncTrimToSegments();
     });
     selectSegment(index + 1);
@@ -956,28 +1051,21 @@ async function setupEditor() {
   // whatever happened to be selected.
   let menuTimeMs = 0;
 
-  const canPaste = () => {
-    if (!copiedSegment) return false;
-    // Pasting puts footage back into a gap the cuts left. Anything else would
-    // have to overlap a piece that is already there.
-    return !session.segments.some(
-      (segment) =>
-        copiedSegment!.startMs < segment.endMs && segment.startMs < copiedSegment!.endMs,
-    );
-  };
+  const canPaste = () => Boolean(copiedSegment);
   const copySelectedSegment = () => {
     if (selectedSegment === null) return;
     copiedSegment = { ...session.segments[selectedSegment] };
   };
   const pasteSegment = () => {
-    if (!copiedSegment || !canPaste()) return;
-    const restored = { ...copiedSegment };
+    if (!copiedSegment) return;
+    const copy = { ...copiedSegment };
+    // Land it after whatever is selected, or at the end when nothing is.
+    const at = selectedSegment === null ? session.segments.length : selectedSegment + 1;
     mutate(() => {
-      session.segments.push(restored);
-      session.segments.sort((left, right) => left.startMs - right.startMs);
+      session.segments.splice(at, 0, copy);
       syncTrimToSegments();
     });
-    selectSegment(session.segments.findIndex((segment) => segment.startMs === restored.startMs));
+    selectSegment(at);
   };
 
   const closeClipMenu = () => {
@@ -987,11 +1075,8 @@ async function setupEditor() {
     const rect = clipLane.getBoundingClientRect();
     if (rect.width <= 0) return;
     const ratio = (event.clientX - rect.left) / rect.width;
-    menuTimeMs = Math.max(0, Math.min(session.durationMs, ratio * session.durationMs));
-    const under = session.segments.findIndex(
-      (segment) => menuTimeMs >= segment.startMs && menuTimeMs <= segment.endMs,
-    );
-    selectSegment(under < 0 ? null : under);
+    menuTimeMs = clampToTrim(ratio * outputDuration());
+    selectSegment(overZoomLane ? null : segmentAtOutput(menuTimeMs));
 
     // Adding a zoom belongs to the zoom lane; cutting belongs to the clip lane.
     clipMenu
@@ -1127,19 +1212,13 @@ async function setupEditor() {
   // what makes the editor show the same thing the export produces.
   // Land inside what survives. Everything between the cuts was removed, so a
   // time that falls in a gap belongs at the start of the next piece.
-  const clampToTrim = (ms: number) => {
-    const segments = session.segments;
-    if (!segments.length) return ms;
-    if (ms <= segments[0].startMs) return segments[0].startMs;
-    for (const segment of segments) {
-      if (ms < segment.startMs) return segment.startMs;
-      if (ms <= segment.endMs) return ms;
-    }
-    return segments[segments.length - 1].endMs;
-  };
+  // Positions along the timeline are positions in the export, so the only
+  // bound is its length.
+  const clampToTrim = (ms: number) => Math.max(0, Math.min(ms, outputDuration()));
   const updatePlayhead = () => {
     const now = Number(playhead.value);
-    const ratio = session.durationMs ? now / session.durationMs : 0;
+    const total = outputDuration();
+    const ratio = total ? now / total : 0;
     playheadOutput.value = formatElapsed(now);
     const laneLeft = markerLane.offsetLeft;
     const laneWidth = markerLane.clientWidth;
@@ -1195,10 +1274,15 @@ async function setupEditor() {
     timelineGrid.classList.toggle("audio-present", hasAudioTrack);
     updatePlayhead();
     markerLane.replaceChildren();
+    const total = Math.max(1, outputDuration());
     session.markers.forEach((marker, index) => {
-      const start = marker.timeMs / session.durationMs * 100;
+      const shownAt = outputAtSource(marker.timeMs);
+      // The stretch it belonged to was cut away, so it has nowhere to sit.
+      if (shownAt === null) return;
       const endMs = Math.min(session.durationMs, marker.timeMs + markerTotalDuration(marker));
-      const width = Math.max(1.6, (endMs - marker.timeMs) / session.durationMs * 100);
+      const shownEnd = outputAtSource(endMs) ?? shownAt + (endMs - marker.timeMs);
+      const start = (shownAt / total) * 100;
+      const width = Math.max(1.6, ((shownEnd - shownAt) / total) * 100);
       const region = document.createElement("button");
       region.type = "button";
       region.className = "recordly-zoom-region";
@@ -1219,11 +1303,12 @@ async function setupEditor() {
       markerLane.append(region);
     });
     clipLane.replaceChildren(...session.segments.map((segment, index) => {
+      const span = segment.endMs - segment.startMs;
       const region = document.createElement("button");
       region.type = "button";
       region.className = "clip-region";
-      region.style.left = `${(segment.startMs / session.durationMs) * 100}%`;
-      region.style.width = `${((segment.endMs - segment.startMs) / session.durationMs) * 100}%`;
+      region.style.left = `${(outputStartOf(index) / total) * 100}%`;
+      region.style.width = `${(span / total) * 100}%`;
       region.classList.toggle("selected", index === selectedSegment);
       region.setAttribute("aria-pressed", String(index === selectedSegment));
       region.title = `${formatElapsed(segment.startMs)} - ${formatElapsed(segment.endMs)}`;
@@ -1239,44 +1324,16 @@ async function setupEditor() {
       region.dataset.segment = String(index);
       region.addEventListener("click", (event) => {
         if ((event.target as HTMLElement).closest(".trim-handle")) return;
+        if (draggedClip) return;
         selectSegment(index === selectedSegment ? null : index);
+      });
+      region.addEventListener("pointerdown", (event) => {
+        if ((event.target as HTMLElement).closest(".trim-handle")) return;
+        beginClipDrag(event, index);
       });
       return region;
     }));
     deleteClip.disabled = selectedSegment === null || session.segments.length < 2;
-
-    // What the cuts removed is gone from the whole timeline, not just the clip
-    // lane, so the other tracks show the same holes rather than implying their
-    // contents survive there.
-    const gaps: Array<[number, number]> = [];
-    let cursor = 0;
-    for (const segment of session.segments) {
-      if (segment.startMs > cursor) gaps.push([cursor, segment.startMs]);
-      cursor = segment.endMs;
-    }
-    if (cursor < session.durationMs) gaps.push([cursor, session.durationMs]);
-    const paintGaps = (lane: HTMLElement, ranges: Array<[number, number]>) => {
-      lane.querySelectorAll(".lane-gap").forEach((node) => node.remove());
-      for (const [from, to] of ranges) {
-        const gap = document.createElement("span");
-        gap.className = "lane-gap";
-        gap.style.left = `${(from / session.durationMs) * 100}%`;
-        gap.style.width = `${((to - from) / session.durationMs) * 100}%`;
-        lane.append(gap);
-      }
-    };
-    paintGaps(markerLane, gaps);
-    if (hasAudioTrack) {
-      // Detached audio keeps its own cuts, so its holes are its own.
-      const audioGaps: Array<[number, number]> = [];
-      let audioCursor = 0;
-      for (const segment of session.audioSegments) {
-        if (segment.startMs > audioCursor) audioGaps.push([audioCursor, segment.startMs]);
-        audioCursor = segment.endMs;
-      }
-      if (audioCursor < session.durationMs) audioGaps.push([audioCursor, session.durationMs]);
-      paintGaps(audioLane, audioGaps);
-    }
   };
   const syncSettings = () => {
     background.value = session.settings.background;
@@ -1312,8 +1369,8 @@ async function setupEditor() {
     syncStaticPreview();
   };
   const syncAll = () => {
-    durationOutput.value = formatElapsed(session.durationMs);
-    playhead.max = String(session.durationMs);
+    durationOutput.value = formatElapsed(outputDuration());
+    playhead.max = String(outputDuration());
     playhead.value = String(clampToTrim(Number(playhead.value || 0)));
     syncSettings();
     syncMarkerPanel();
@@ -1593,7 +1650,7 @@ async function setupEditor() {
   });
   const createMarker = (hideCursor = false) => {
     const marker: ZoomMarker = {
-      timeMs: Number(playhead.value),
+      timeMs: Math.round(sourceAtOutput(Number(playhead.value))),
       x: 0.5,
       y: 0.5,
       targetScale: session.settings.zoomScale,
@@ -1772,9 +1829,10 @@ async function setupEditor() {
   const flushSeek = () => {
     seekFrame = 0;
     if (queuedSeekMs === null) return;
-    const seconds = queuedSeekMs / 1000;
+    const outputMs = queuedSeekMs;
     queuedSeekMs = null;
-    video.currentTime = seconds;
+    playingSegment = segmentAtOutput(outputMs);
+    video.currentTime = sourceAtOutput(outputMs) / 1000;
     syncSidecarTime(true);
   };
   const seekPreview = (ms: number) => {
@@ -1827,7 +1885,7 @@ async function setupEditor() {
     const seekTo = (clientX: number) => {
       const ratio = (clientX - rect.left) / rect.width;
       const at = clampToTrim(
-        Math.round(Math.max(0, Math.min(1, ratio)) * session.durationMs),
+        Math.round(Math.max(0, Math.min(1, ratio)) * outputDuration()),
       );
       playhead.value = String(at);
       updatePlayhead();
@@ -1845,8 +1903,11 @@ async function setupEditor() {
   });
   video.addEventListener("timeupdate", () => {
     if (!video.paused || playhead.matches(":active")) return;
-    playhead.value = String(Math.round(video.currentTime * 1000));
-    updatePlayhead();
+    const shown = outputAtSource(Math.round(video.currentTime * 1000));
+    if (shown !== null) {
+      playhead.value = String(shown);
+      updatePlayhead();
+    }
     updateLivePreview();
     syncSidecarTime(true);
   });

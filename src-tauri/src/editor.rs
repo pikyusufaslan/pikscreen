@@ -100,20 +100,13 @@ impl EditorChanges {
         if self.trim_start_ms >= self.trim_end_ms || self.trim_end_ms > duration_ms {
             return Err("Editor trim range must stay inside the recording.".to_owned());
         }
-        let mut previous_end = 0;
+        // The list is what the export plays, in the order it is given. Clips can
+        // be reordered and the same stretch can appear more than once, so all
+        // each has to be is a real span inside the recording.
         for segment in self.segments.iter().chain(self.audio_segments.iter()) {
             if segment.start_ms >= segment.end_ms || segment.end_ms > duration_ms {
                 return Err("Editor cut must stay inside the recording.".to_owned());
             }
-        }
-        for segment in &self.segments {
-            if segment.start_ms >= segment.end_ms || segment.end_ms > duration_ms {
-                return Err("Editor cut must stay inside the recording.".to_owned());
-            }
-            if segment.start_ms < previous_end {
-                return Err("Editor cuts must be in order and must not overlap.".to_owned());
-            }
-            previous_end = segment.end_ms;
         }
         for marker in &self.markers {
             if marker.time_ms > duration_ms
@@ -331,24 +324,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cuts_that_overlap_or_run_backwards() {
-        let overlapping = changes_with(vec![
+    fn clips_may_be_reordered_and_repeated() {
+        // The export plays the list in the order it is given, so a later
+        // stretch coming first, or appearing twice, is an arrangement rather
+        // than a mistake.
+        let arranged = changes_with(vec![
+            Segment {
+                start_ms: 60,
+                end_ms: 90,
+            },
             Segment {
                 start_ms: 0,
-                end_ms: 50,
+                end_ms: 20,
             },
             Segment {
-                start_ms: 40,
-                end_ms: 60,
+                start_ms: 60,
+                end_ms: 90,
             },
         ]);
-        assert!(overlapping.validate(100).is_err());
+        assert!(arranged.validate(100).is_ok());
+    }
 
+    #[test]
+    fn rejects_a_clip_that_is_not_a_span() {
         let backwards = changes_with(vec![Segment {
             start_ms: 60,
             end_ms: 40,
         }]);
         assert!(backwards.validate(100).is_err());
+
+        let empty = changes_with(vec![Segment {
+            start_ms: 40,
+            end_ms: 40,
+        }]);
+        assert!(empty.validate(100).is_err());
     }
 
     #[test]
