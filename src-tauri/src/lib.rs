@@ -17,8 +17,12 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     webview::PageLoadEvent,
-    Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder,
+    Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, WebviewUrl,
+    WebviewWindowBuilder,
 };
+
+/// Shared between the menu the HUD pops up and the handler that answers it.
+const HUD_MENU_SETTINGS: &str = "hud-settings";
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -445,6 +449,21 @@ fn save_settings(app: tauri::AppHandle, settings: settings::SavedSettings) -> Re
     })
 }
 
+/// The HUD window is pinned to 530x68, so a menu drawn inside the page would be
+/// clipped by its own window. A native popup is not bound by that.
+#[tauri::command]
+fn popup_hud_menu(app: tauri::AppHandle, x: f64, y: f64) -> Result<(), String> {
+    let hud = app
+        .get_webview_window("main")
+        .ok_or_else(|| "PikScreen window is unavailable.".to_owned())?;
+    let settings = MenuItem::with_id(&app, HUD_MENU_SETTINGS, "Settings", true, None::<&str>)
+        .map_err(|error| format!("Could not build the PikScreen menu: {error}"))?;
+    let menu = Menu::with_items(&app, &[&settings])
+        .map_err(|error| format!("Could not build the PikScreen menu: {error}"))?;
+    hud.popup_menu_at(&menu, LogicalPosition::new(x, y))
+        .map_err(|error| format!("Could not open the PikScreen menu: {error}"))
+}
+
 #[tauri::command]
 fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("settings") {
@@ -674,6 +693,14 @@ pub fn run() {
         .manage(portal::CaptureState::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() != HUD_MENU_SETTINGS {
+                return;
+            }
+            if let Err(error) = open_settings_window(app.clone()) {
+                eprintln!("PikScreen could not open Settings from the HUD menu: {error}");
+            }
+        })
         .on_page_load(|webview, payload| {
             if webview.label() != "main" || !matches!(payload.event(), PageLoadEvent::Finished) {
                 return;
@@ -713,6 +740,7 @@ pub fn run() {
             load_settings,
             save_settings,
             open_settings_window,
+            popup_hud_menu,
             load_editor_session,
             save_editor_session,
             discard_editor_session,

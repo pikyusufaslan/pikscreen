@@ -2222,10 +2222,24 @@ window.addEventListener("DOMContentLoaded", () => {
     if (windowCropNote) windowCropNote.hidden = !windowSource;
   }
 
-  toggleSettings?.addEventListener("click", () => {
-    if (settingsWindow || document.body.dataset.sessionState === "recording" || document.body.dataset.sessionState === "rendering") return;
+  const settingsReachable = () => !settingsWindow
+    && document.body.dataset.sessionState !== "recording"
+    && document.body.dataset.sessionState !== "rendering";
+  const openSettings = () => {
+    if (!settingsReachable()) return;
     void invoke("open_settings_window").catch(error => {
       if (status) status.textContent = `Could not open settings: ${String(error)}`;
+    });
+  };
+  toggleSettings?.addEventListener("click", openSettings);
+  // The HUD has no room for a settings control, so it lives on the right
+  // button. The menu is native because the HUD window is pinned to its own
+  // 530x68 and would clip anything the page drew.
+  hudRail?.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    if (!tauriAvailable || !settingsReachable()) return;
+    void invoke("popup_hud_menu", { x: event.clientX, y: event.clientY }).catch(error => {
+      if (status) status.textContent = `Could not open the PikScreen menu: ${String(error)}`;
     });
   });
   function syncBinaryControl(toggle: HTMLButtonElement | null, enabled: boolean, onLabel: string, offLabel: string) {
