@@ -559,9 +559,8 @@ async function setupEditor() {
   const markerLane = query<HTMLElement>("#editor-marker-lane");
   const timelineGrid = query<HTMLElement>(".timeline-grid");
   const clipLane = query<HTMLElement>("#editor-clip-lane");
-  const splitClip = query<HTMLButtonElement>("#editor-split");
+  const clipRegion = query<HTMLElement>("#editor-clip-region");
   const clipMenu = query<HTMLElement>("#editor-clip-menu");
-  const deleteClip = query<HTMLButtonElement>("#editor-delete-clip");
   const audioTrackLabel = query<HTMLElement>("#editor-audio-track-label");
   const audioLane = query<HTMLElement>("#editor-audio-lane");
   const rulerLabels = query<HTMLElement>("#editor-ruler-labels");
@@ -638,9 +637,7 @@ async function setupEditor() {
   let session: EditorSession;
   let sessionReady = false;
   let selectedMarker: number | null = null;
-  let selectedSegment: number | null = null;
-  let hoveredSegment: number | null = null;
-  let playingSegment = 0;
+
   let busy = false;
   let syncEditorBackgroundGallery = () => {};
   let liveFrameRequest = 0;
@@ -871,26 +868,14 @@ async function setupEditor() {
         stopLiveFrames();
         return;
       }
-      // The source runs on past the end of whatever clip is playing, so follow
-      // the list: at the end of one, continue at the start of the next.
-      const sourceMs = video.currentTime * 1000;
-      const playing = session.segments[playingSegment] ?? session.segments[0];
-      if (!playing) return;
-      if (sourceMs >= playing.endMs) {
-        const next = session.segments[playingSegment + 1];
-        if (!next) {
-          video.pause();
-          return;
-        }
-        playingSegment += 1;
-        video.currentTime = next.startMs / 1000;
-        syncSidecarTime(true);
+      if (video.currentTime * 1000 >= session.trimEndMs) {
+        video.pause();
+        video.currentTime = session.trimEndMs / 1000;
         return;
       }
-      const outputMs = outputStartOf(playingSegment) + (sourceMs - playing.startMs);
-      playhead.value = String(Math.round(outputMs));
+      playhead.value = String(Math.round(video.currentTime * 1000));
       updatePlayhead();
-      updateLivePreview(Math.round(sourceMs));
+      updateLivePreview();
       syncSidecarTime();
       if (typeof video.requestVideoFrameCallback === "function") {
         videoFrameRequest = video.requestVideoFrameCallback(() => {
@@ -913,187 +898,16 @@ async function setupEditor() {
   previewResizeObserver.observe(previewColumn);
   const timelineResizeObserver = new ResizeObserver(() => syncTimeline());
   timelineResizeObserver.observe(timelineGrid);
-  // The timeline shows the export: clips laid out in the order they play, not
-  // where they sit in the source. These convert between the two, which is what
-  // lets a clip be moved without its contents moving with it.
-  const outputDuration = () =>
-    session.segments.reduce((total, segment) => total + (segment.endMs - segment.startMs), 0);
-  const outputStartOf = (index: number) =>
-    session.segments
-      .slice(0, index)
-      .reduce((total, segment) => total + (segment.endMs - segment.startMs), 0);
-  const segmentAtOutput = (outputMs: number) => {
-    let elapsed = 0;
-    for (let index = 0; index < session.segments.length; index += 1) {
-      const span = session.segments[index].endMs - session.segments[index].startMs;
-      if (outputMs < elapsed + span) return index;
-      elapsed += span;
-    }
-    return session.segments.length - 1;
-  };
-  const sourceAtOutput = (outputMs: number) => {
-    const index = segmentAtOutput(outputMs);
-    if (index < 0) return 0;
-    const segment = session.segments[index];
-    return segment.startMs + Math.max(0, outputMs - outputStartOf(index));
-  };
-  // A source moment can play more than once; the first appearance is the one
-  // overlays are drawn at.
-  const outputAtSource = (sourceMs: number) => {
-    for (let index = 0; index < session.segments.length; index += 1) {
-      const segment = session.segments[index];
-      if (sourceMs >= segment.startMs && sourceMs <= segment.endMs) {
-        return outputStartOf(index) + (sourceMs - segment.startMs);
-      }
-    }
-    return null;
-  };
-
-  // Holding a clip and moving it sideways changes where it plays, not what it
-  // contains: the list is reordered, the clip keeps its own stretch of source.
-  let draggedClip = false;
-  function beginClipDrag(event: PointerEvent, index: number) {
-    if (event.button !== 0 || session.segments.length < 2) return;
-    const rect = clipLane.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const startX = event.clientX;
-    let from = index;
-    draggedClip = false;
-
-    const move = (next: PointerEvent) => {
-      if (!draggedClip && Math.abs(next.clientX - startX) < 4) return;
-      if (!draggedClip) {
-        draggedClip = true;
-        pushHistory();
-        clipLane.classList.add("reordering");
-      }
-      const at = ((next.clientX - rect.left) / rect.width) * outputDuration();
-      const target = segmentAtOutput(Math.max(0, Math.min(at, outputDuration() - 1)));
-      if (target === from || target < 0) return;
-      const [moved] = session.segments.splice(from, 1);
-      session.segments.splice(target, 0, moved);
-      from = target;
-      selectedSegment = target;
-      markDirty();
-      syncTimeline();
-    };
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      clipLane.classList.remove("reordering");
-      if (draggedClip) {
-        syncTrimToSegments();
-        syncAll();
-      }
-      // Let the click that follows know a drag happened, then forget it.
-      window.setTimeout(() => {
-        draggedClip = false;
-      }, 0);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop, { once: true });
-  }
-
-  const selectSegment = (index: number | null) => {
-    selectedSegment = index;
-    syncTimeline();
-  };
-  // The trim fields still describe the outer edges of what survives, which is
-  // what the rest of the pipeline and older payloads read.
-  const syncTrimToSegments = () => {
-    // Kept for payloads that still read them; with a reorderable list they
-    // describe the outermost source the export touches.
-    session.trimStartMs = Math.min(...session.segments.map((segment) => segment.startMs));
-    session.trimEndMs = Math.max(...session.segments.map((segment) => segment.endMs));
-  };
-  // Where a cut would land, or -1 when it would fall on a clip's edge and make
-  // an empty piece.
-  const segmentAt = (outputMs: number) => {
-    const index = segmentAtOutput(outputMs);
-    if (index < 0) return -1;
-    const within = outputMs - outputStartOf(index);
-    const span = session.segments[index].endMs - session.segments[index].startMs;
-    return within > 0 && within < span ? index : -1;
-  };
-  const cutAtPlayhead = () => {
-    const at = Math.round(Number(playhead.value));
-    const index = segmentAt(at);
-    if (index < 0) return;
-    const source = Math.round(sourceAtOutput(at));
-    mutate(() => {
-      const segment = session.segments[index];
-      session.segments.splice(
-        index,
-        1,
-        { startMs: segment.startMs, endMs: source },
-        { startMs: source, endMs: segment.endMs },
-      );
-      syncTrimToSegments();
-    });
-    selectSegment(index + 1);
-  };
-  const deleteSegmentAt = (index: number | null) => {
-    // Something has to survive, so the last piece cannot be removed.
-    if (index === null || index < 0 || session.segments.length < 2) return;
-    mutate(() => {
-      session.segments.splice(index, 1);
-      syncTrimToSegments();
-    });
-    hoveredSegment = null;
-    selectSegment(null);
-    // The playhead may now sit in the gap the cut left behind.
-    const settled = clampToTrim(Number(playhead.value));
-    playhead.value = String(settled);
-    seekPreview(settled);
-    updatePlayhead();
-  };
-  let copiedSegment: Segment | null = null;
-  // Where a right-click landed, so the menu acts on that piece rather than on
-  // whatever happened to be selected.
-  let menuTimeMs = 0;
-
-  const canPaste = () => Boolean(copiedSegment);
-  const copySelectedSegment = () => {
-    if (selectedSegment === null) return;
-    copiedSegment = { ...session.segments[selectedSegment] };
-  };
-  const pasteSegment = () => {
-    if (!copiedSegment) return;
-    const copy = { ...copiedSegment };
-    // Land it after whatever is selected, or at the end when nothing is.
-    const at = selectedSegment === null ? session.segments.length : selectedSegment + 1;
-    mutate(() => {
-      session.segments.splice(at, 0, copy);
-      syncTrimToSegments();
-    });
-    selectSegment(at);
-  };
-
   const closeClipMenu = () => {
     clipMenu.hidden = true;
   };
-  const openClipMenu = (event: MouseEvent, overZoomLane: boolean) => {
+  let menuTimeMs = 0;
+  const openClipMenu = (event: MouseEvent) => {
     const rect = clipLane.getBoundingClientRect();
     if (rect.width <= 0) return;
     const ratio = (event.clientX - rect.left) / rect.width;
-    menuTimeMs = clampToTrim(ratio * outputDuration());
-    selectSegment(overZoomLane ? null : segmentAtOutput(menuTimeMs));
+    menuTimeMs = clampToTrim(ratio * session.durationMs);
 
-    // Adding a zoom belongs to the zoom lane; cutting belongs to the clip lane.
-    clipMenu
-      .querySelectorAll<HTMLElement>("[data-clip-group]")
-      .forEach((group) => {
-        group.hidden = group.dataset.clipGroup === "zoom" ? !overZoomLane : overZoomLane;
-      });
-    clipMenu.querySelectorAll<HTMLButtonElement>("[data-clip-action]").forEach((item) => {
-      const action = item.dataset.clipAction;
-      if (action === "split") item.disabled = segmentAt(menuTimeMs) < 0;
-      if (action === "copy") item.disabled = selectedSegment === null;
-      if (action === "paste") item.disabled = !canPaste();
-      if (action === "delete") {
-        item.disabled = selectedSegment === null || session.segments.length < 2;
-      }
-    });
 
     clipMenu.hidden = false;
     // Measure once visible so a menu near the edge folds back into view.
@@ -1127,7 +941,6 @@ async function setupEditor() {
     session.trimEndMs = next.trimEndMs;
     session.segments = clone(next.segments);
     session.audioSegments = clone(next.audioSegments ?? []);
-    selectedSegment = null;
     session.markers = clone(next.markers);
     session.settings = clone(next.settings);
     invalidatePreviewCameraTrack();
@@ -1213,13 +1026,13 @@ async function setupEditor() {
   // what makes the editor show the same thing the export produces.
   // Land inside what survives. Everything between the cuts was removed, so a
   // time that falls in a gap belongs at the start of the next piece.
-  // Positions along the timeline are positions in the export, so the only
-  // bound is its length.
-  const clampToTrim = (ms: number) => Math.max(0, Math.min(ms, outputDuration()));
+  // Everything outside the trim is dropped on export, so the playhead stays
+  // inside it and the editor shows what the export produces.
+  const clampToTrim = (ms: number) =>
+    Math.min(Math.max(ms, session.trimStartMs), session.trimEndMs);
   const updatePlayhead = () => {
     const now = Number(playhead.value);
-    const total = outputDuration();
-    const ratio = total ? now / total : 0;
+    const ratio = session.durationMs ? now / session.durationMs : 0;
     playheadOutput.value = formatElapsed(now);
     const laneLeft = markerLane.offsetLeft;
     const laneWidth = markerLane.clientWidth;
@@ -1275,15 +1088,10 @@ async function setupEditor() {
     timelineGrid.classList.toggle("audio-present", hasAudioTrack);
     updatePlayhead();
     markerLane.replaceChildren();
-    const total = Math.max(1, outputDuration());
     session.markers.forEach((marker, index) => {
-      const shownAt = outputAtSource(marker.timeMs);
-      // The stretch it belonged to was cut away, so it has nowhere to sit.
-      if (shownAt === null) return;
+      const start = (marker.timeMs / session.durationMs) * 100;
       const endMs = Math.min(session.durationMs, marker.timeMs + markerTotalDuration(marker));
-      const shownEnd = outputAtSource(endMs) ?? shownAt + (endMs - marker.timeMs);
-      const start = (shownAt / total) * 100;
-      const width = Math.max(1.6, ((shownEnd - shownAt) / total) * 100);
+      const width = Math.max(1.6, ((endMs - marker.timeMs) / session.durationMs) * 100);
       const region = document.createElement("button");
       region.type = "button";
       region.className = "recordly-zoom-region";
@@ -1303,44 +1111,10 @@ async function setupEditor() {
       });
       markerLane.append(region);
     });
-    clipLane.replaceChildren(...session.segments.map((segment, index) => {
-      const span = segment.endMs - segment.startMs;
-      const region = document.createElement("button");
-      region.type = "button";
-      region.className = "clip-region";
-      region.style.left = `${(outputStartOf(index) / total) * 100}%`;
-      region.style.width = `${(span / total) * 100}%`;
-      region.classList.toggle("selected", index === selectedSegment);
-      region.setAttribute("aria-pressed", String(index === selectedSegment));
-      region.title = `${formatElapsed(segment.startMs)} - ${formatElapsed(segment.endMs)}`;
-      const start = document.createElement("span");
-      start.className = "trim-handle recordly-trim-handle start";
-      const label = document.createElement("span");
-      label.innerHTML = '<i class="ph ph-monitor-play"></i> Screen recording';
-      const end = document.createElement("span");
-      end.className = "trim-handle recordly-trim-handle end";
-      if (index === 0) bindTrimHandle(start, "start");
-      if (index === session.segments.length - 1) bindTrimHandle(end, "end");
-      region.append(start, label, end);
-      region.dataset.segment = String(index);
-      region.addEventListener("click", (event) => {
-        if ((event.target as HTMLElement).closest(".trim-handle")) return;
-        if (draggedClip) return;
-        selectSegment(index === selectedSegment ? null : index);
-      });
-      region.addEventListener("pointerdown", (event) => {
-        if ((event.target as HTMLElement).closest(".trim-handle")) return;
-        beginClipDrag(event, index);
-      });
-      region.addEventListener("pointerenter", () => {
-        hoveredSegment = index;
-      });
-      region.addEventListener("pointerleave", () => {
-        if (hoveredSegment === index) hoveredSegment = null;
-      });
-      return region;
-    }));
-    deleteClip.disabled = selectedSegment === null || session.segments.length < 2;
+    const trimLeft = (session.trimStartMs / session.durationMs) * 100;
+    const trimWidth = ((session.trimEndMs - session.trimStartMs) / session.durationMs) * 100;
+    clipRegion.style.left = `${trimLeft}%`;
+    clipRegion.style.width = `${trimWidth}%`;
   };
   const syncSettings = () => {
     background.value = session.settings.background;
@@ -1376,8 +1150,8 @@ async function setupEditor() {
     syncStaticPreview();
   };
   const syncAll = () => {
-    durationOutput.value = formatElapsed(outputDuration());
-    playhead.max = String(outputDuration());
+    durationOutput.value = formatElapsed(session.durationMs);
+    playhead.max = String(session.durationMs);
     playhead.value = String(clampToTrim(Number(playhead.value || 0)));
     syncSettings();
     syncMarkerPanel();
@@ -1395,7 +1169,6 @@ async function setupEditor() {
     }
     // Empty means the sound is cut wherever the picture is.
     if (!Array.isArray(session.audioSegments)) session.audioSegments = [];
-    selectedSegment = null;
     sessionReady = true;
     aspectLabel.innerHTML = `<i class="ph ph-monitor"></i> ${next.width} × ${next.height}`;
     smoothedPreviewCursor = null;
@@ -1551,17 +1324,12 @@ async function setupEditor() {
     });
   });
 
-  splitClip.addEventListener("click", cutAtPlayhead);
-  deleteClip.addEventListener("click", () => deleteSegmentAt(selectedSegment));
-  // The playhead input covers the lanes to catch drags, so the menu works off
-  // the pointer position rather than whatever element the event landed on.
+  // The menu works off the pointer's position rather than whatever element the
+  // event landed on, so it always means the moment under the cursor.
   timelineGrid.addEventListener("contextmenu", (event) => {
     if (!sessionReady) return;
     event.preventDefault();
-    const overZoomLane = Boolean(
-      (event.target as HTMLElement).closest("#editor-marker-lane, .recordly-zoom-region"),
-    );
-    openClipMenu(event, overZoomLane);
+    openClipMenu(event);
   });
   clipMenu.addEventListener("click", (event) => {
     const item = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-clip-action]");
@@ -1575,22 +1343,6 @@ async function setupEditor() {
         updatePlayhead();
         seekPreview(Math.round(menuTimeMs));
         createMarker(item.dataset.clipAction === "zoom-hidden");
-        break;
-      case "split":
-        // Cut where the menu was opened, not where the playhead happens to be.
-        playhead.value = String(Math.round(menuTimeMs));
-        updatePlayhead();
-        seekPreview(Math.round(menuTimeMs));
-        cutAtPlayhead();
-        break;
-      case "copy":
-        copySelectedSegment();
-        break;
-      case "paste":
-        pasteSegment();
-        break;
-      case "delete":
-        deleteSegmentAt(selectedSegment);
         break;
     }
   });
@@ -1615,34 +1367,7 @@ async function setupEditor() {
       redo.click();
       return;
     }
-    if (control && event.key.toLowerCase() === "c") {
-      if (selectedSegment === null) return;
-      event.preventDefault();
-      copySelectedSegment();
-      return;
-    }
-    if (control && event.key.toLowerCase() === "v") {
-      if (!canPaste()) return;
-      event.preventDefault();
-      pasteSegment();
-      return;
-    }
-    if (event.key === "Escape") {
-      closeClipMenu();
-      return;
-    }
-    if (control) return;
-    if (event.key.toLowerCase() === "s") {
-      event.preventDefault();
-      cutAtPlayhead();
-      return;
-    }
-    if (event.key === "Delete" || event.key === "Backspace") {
-      const target = hoveredSegment ?? selectedSegment;
-      if (target === null) return;
-      event.preventDefault();
-      deleteSegmentAt(target);
-    }
+    if (event.key === "Escape") closeClipMenu();
   });
   undo.addEventListener("click", () => {
     const previous = history.pop();
@@ -1658,7 +1383,7 @@ async function setupEditor() {
   });
   const createMarker = (hideCursor = false) => {
     const marker: ZoomMarker = {
-      timeMs: Math.round(sourceAtOutput(Number(playhead.value))),
+      timeMs: Number(playhead.value),
       x: 0.5,
       y: 0.5,
       targetScale: session.settings.zoomScale,
@@ -1837,10 +1562,9 @@ async function setupEditor() {
   const flushSeek = () => {
     seekFrame = 0;
     if (queuedSeekMs === null) return;
-    const outputMs = queuedSeekMs;
+    const seconds = queuedSeekMs / 1000;
     queuedSeekMs = null;
-    playingSegment = segmentAtOutput(outputMs);
-    video.currentTime = sourceAtOutput(outputMs) / 1000;
+    video.currentTime = seconds;
     syncSidecarTime(true);
   };
   const seekPreview = (ms: number) => {
@@ -1893,7 +1617,7 @@ async function setupEditor() {
     const seekTo = (clientX: number) => {
       const ratio = (clientX - rect.left) / rect.width;
       const at = clampToTrim(
-        Math.round(Math.max(0, Math.min(1, ratio)) * outputDuration()),
+        Math.round(Math.max(0, Math.min(1, ratio)) * session.durationMs),
       );
       playhead.value = String(at);
       updatePlayhead();
@@ -1911,11 +1635,8 @@ async function setupEditor() {
   });
   video.addEventListener("timeupdate", () => {
     if (!video.paused || playhead.matches(":active")) return;
-    const shown = outputAtSource(Math.round(video.currentTime * 1000));
-    if (shown !== null) {
-      playhead.value = String(shown);
-      updatePlayhead();
-    }
+    playhead.value = String(Math.round(video.currentTime * 1000));
+    updatePlayhead();
     updateLivePreview();
     syncSidecarTime(true);
   });
@@ -2045,9 +1766,7 @@ async function setupEditor() {
       marker.y = Math.max(0, Math.min(1, frameY));
     }, true);
   });
-  // Declared, not assigned, so syncTimeline can reach it while building the
-  // regions that carry the handles.
-  function bindTrimHandle(handle: HTMLElement, edge: "start" | "end") {
+  const bindTrimHandle = (handle: HTMLElement, edge: "start" | "end") => {
     handle.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2061,13 +1780,12 @@ async function setupEditor() {
             ((nextEvent.clientX - rect.left) / rect.width) * session.durationMs,
           ),
         );
-        // The outer edges of the cut list are the recording's in and out
-        // points; the pieces between them keep their own bounds.
-        const first = session.segments[0];
-        const last = session.segments[session.segments.length - 1];
-        if (edge === "start") first.startMs = Math.round(Math.min(at, first.endMs - 100));
-        else last.endMs = Math.round(Math.max(at, last.startMs + 100));
-        syncTrimToSegments();
+        if (edge === "start") {
+          session.trimStartMs = Math.round(Math.min(at, session.trimEndMs - 100));
+        } else {
+          session.trimEndMs = Math.round(Math.max(at, session.trimStartMs + 100));
+        }
+        session.segments = [{ startMs: session.trimStartMs, endMs: session.trimEndMs }];
         markDirty();
         syncTimeline();
       };
@@ -2078,7 +1796,9 @@ async function setupEditor() {
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", end, { once: true });
     });
-  }
+  };
+  bindTrimHandle(query<HTMLElement>(".recordly-trim-handle.start"), "start");
+  bindTrimHandle(query<HTMLElement>(".recordly-trim-handle.end"), "end");
 
   exportButton.addEventListener("click", (event) => {
     event.stopPropagation();

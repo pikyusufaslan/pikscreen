@@ -236,9 +236,7 @@
             <span class="toolbar-divider"></span>
             <button id="editor-undo" class="icon-button" type="button" title="Undo (Ctrl+Z)" aria-label="Undo"><i class="ph ph-arrow-u-up-left"></i></button>
             <button id="editor-redo" class="icon-button" type="button" title="Redo (Ctrl+Y)" aria-label="Redo"><i class="ph ph-arrow-u-up-right"></i></button>
-            <span class="toolbar-divider"></span>
-            <button id="editor-split" class="icon-button" type="button" title="Cut at playhead (S)" aria-label="Cut at playhead"><i class="ph ph-scissors"></i></button>
-            <button id="editor-delete-clip" class="icon-button danger-ghost" type="button" title="Delete selected clip (Delete)" aria-label="Delete selected clip" disabled><i class="ph ph-minus-circle"></i></button>
+
           </div>
           <div class="editor-project-name">
             <span class="project-dot"></span>
@@ -393,6 +391,7 @@
               <div id="editor-marker-lane" class="track-lane zoom-lane"></div>
               <div class="track-label"><span class="track-icon clip"><i class="ph ph-film-strip"></i></span><strong>Clip</strong></div>
               <div id="editor-clip-lane" class="track-lane clip-lane">
+                <div id="editor-clip-region" class="clip-region"><span class="trim-handle recordly-trim-handle start"></span><span><i class="ph ph-monitor-play"></i> Screen recording</span><span class="trim-handle recordly-trim-handle end"></span></div>
               </div>
               <div id="editor-audio-track-label" class="track-label audio-track-label" hidden><span class="track-icon audio"><i class="ph ph-waveform"></i></span><strong>Source audio</strong></div>
               <div id="editor-audio-lane" class="track-lane audio-lane" hidden><span class="audio-waveform" aria-hidden="true"></span><span>Captured audio</span></div>
@@ -472,17 +471,9 @@
         </div>
       </footer>
     </main>
-    <div id="editor-clip-menu" class="clip-menu" role="menu" aria-label="Clip actions" hidden>
-      <div class="clip-menu-group" data-clip-group="zoom">
-        <button type="button" role="menuitem" data-clip-action="zoom"><span><i class="ph ph-magnifying-glass-plus swatch zoom"></i> Add zoom</span></button>
-        <button type="button" role="menuitem" data-clip-action="zoom-hidden"><span><i class="ph ph-magnifying-glass-plus swatch zoom-hidden"></i> Add zoom, hide cursor</span></button>
-        <div class="clip-menu-divider"></div>
-      </div>
-      <button type="button" role="menuitem" data-clip-action="split"><span><i class="ph ph-scissors"></i> Cut here</span><kbd>S</kbd></button>
-      <button type="button" role="menuitem" data-clip-action="copy"><span><i class="ph ph-copy"></i> Copy</span><kbd>Ctrl C</kbd></button>
-      <button type="button" role="menuitem" data-clip-action="paste"><span><i class="ph ph-clipboard-text"></i> Paste</span><kbd>Ctrl V</kbd></button>
-      <div class="clip-menu-divider"></div>
-      <button type="button" role="menuitem" class="danger" data-clip-action="delete"><span><i class="ph ph-trash"></i> Delete</span><kbd>Del</kbd></button>
+    <div id="editor-clip-menu" class="clip-menu" role="menu" aria-label="Timeline actions" hidden>
+      <button type="button" role="menuitem" data-clip-action="zoom"><span><i class="ph ph-magnifying-glass-plus swatch zoom"></i> Add zoom</span></button>
+      <button type="button" role="menuitem" data-clip-action="zoom-hidden"><span><i class="ph ph-magnifying-glass-plus swatch zoom-hidden"></i> Add zoom, hide cursor</span></button>
     </div>
   </body>
 </html>
