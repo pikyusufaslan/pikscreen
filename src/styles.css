@@ -2852,3 +2852,10 @@ body[data-surface="hud"][data-session-state="recording"] .record-button i { widt
 .clip-region {
   cursor: grab;
 }
+
+/* Delete takes the clip under the pointer, so which one that is has to be
+   visible before the key is pressed. */
+.clip-region:hover {
+  border-color: rgb(86 194 136 / 0.85);
+  background: rgb(86 194 136 / 0.24);
+}

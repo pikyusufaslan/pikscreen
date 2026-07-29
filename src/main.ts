@@ -639,6 +639,7 @@ async function setupEditor() {
   let sessionReady = false;
   let selectedMarker: number | null = null;
   let selectedSegment: number | null = null;
+  let hoveredSegment: number | null = null;
   let playingSegment = 0;
   let busy = false;
   let syncEditorBackgroundGallery = () => {};
@@ -1031,14 +1032,14 @@ async function setupEditor() {
     });
     selectSegment(index + 1);
   };
-  const deleteSelectedSegment = () => {
+  const deleteSegmentAt = (index: number | null) => {
     // Something has to survive, so the last piece cannot be removed.
-    if (selectedSegment === null || session.segments.length < 2) return;
-    const index = selectedSegment;
+    if (index === null || index < 0 || session.segments.length < 2) return;
     mutate(() => {
       session.segments.splice(index, 1);
       syncTrimToSegments();
     });
+    hoveredSegment = null;
     selectSegment(null);
     // The playhead may now sit in the gap the cut left behind.
     const settled = clampToTrim(Number(playhead.value));
@@ -1331,6 +1332,12 @@ async function setupEditor() {
         if ((event.target as HTMLElement).closest(".trim-handle")) return;
         beginClipDrag(event, index);
       });
+      region.addEventListener("pointerenter", () => {
+        hoveredSegment = index;
+      });
+      region.addEventListener("pointerleave", () => {
+        if (hoveredSegment === index) hoveredSegment = null;
+      });
       return region;
     }));
     deleteClip.disabled = selectedSegment === null || session.segments.length < 2;
@@ -1545,7 +1552,7 @@ async function setupEditor() {
   });
 
   splitClip.addEventListener("click", cutAtPlayhead);
-  deleteClip.addEventListener("click", deleteSelectedSegment);
+  deleteClip.addEventListener("click", () => deleteSegmentAt(selectedSegment));
   // The playhead input covers the lanes to catch drags, so the menu works off
   // the pointer position rather than whatever element the event landed on.
   timelineGrid.addEventListener("contextmenu", (event) => {
@@ -1583,7 +1590,7 @@ async function setupEditor() {
         pasteSegment();
         break;
       case "delete":
-        deleteSelectedSegment();
+        deleteSegmentAt(selectedSegment);
         break;
     }
   });
@@ -1631,9 +1638,10 @@ async function setupEditor() {
       return;
     }
     if (event.key === "Delete" || event.key === "Backspace") {
-      if (selectedSegment === null) return;
+      const target = hoveredSegment ?? selectedSegment;
+      if (target === null) return;
       event.preventDefault();
-      deleteSelectedSegment();
+      deleteSegmentAt(target);
     }
   });
   undo.addEventListener("click", () => {
