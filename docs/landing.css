@@ -1,0 +1,701 @@
+/* PikScreen landing page.
+   Tokens are lifted from src/styles.css so the page and the application read as
+   the same product. Radii follow one rule: panels, cards, and media use 14px,
+   controls (buttons, chips, keys, icon tiles) use 8px. */
+
+:root {
+  color-scheme: dark;
+
+  --canvas: #0b0c0f;
+  --surface-0: #0e1014;
+  --surface-1: #121419;
+  --surface-2: #17191f;
+  --surface-3: #20232a;
+  --border: #2a2e36;
+  --border-strong: #383d47;
+  --text: #f1f3f5;
+  --text-soft: #c7cbd2;
+  --muted: #9399a4;
+  --quiet: #696f79;
+
+  --accent: #3f73f1;
+  --accent-hover: #5284f7;
+  --accent-soft: rgb(63 115 241 / 0.14);
+  /* The filled button sits a step deeper than the interface accent so white
+     label text clears AA against it. */
+  --accent-fill: #3563d6;
+  --accent-fill-hover: #2d5ac9;
+
+  --radius-panel: 14px;
+  --radius-control: 8px;
+
+  --gutter: clamp(20px, 5vw, 48px);
+  --section-gap: clamp(84px, 11vw, 148px);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  font-family: Inter, "Noto Sans", "Segoe UI", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: linear-gradient(180deg, var(--surface-0), var(--canvas) 520px);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent-hover);
+  text-decoration-color: rgb(82 132 247 / 0.35);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+kbd {
+  display: inline-block;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-control);
+  background: var(--surface-3);
+  color: var(--text-soft);
+  font-family: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  font-size: 0.78em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.shell {
+  width: min(1180px, 100%);
+  padding-inline: var(--gutter);
+  margin-inline: auto;
+}
+
+.shell.narrow {
+  max-width: min(780px, 100%);
+  margin-inline: auto;
+}
+
+.wordmark {
+  display: block;
+  width: 236px;
+  height: auto;
+}
+
+/* Sections settle in as they arrive. Content is visible without scripting. */
+.js [data-reveal] {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 620ms var(--ease),
+    transform 620ms var(--ease);
+}
+
+.js [data-reveal].is-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Capture brackets, the same corner motif as the wordmark. */
+.frame {
+  position: relative;
+  margin: 0;
+}
+
+.frame::before,
+.frame::after,
+.frame-brackets::before,
+.frame-brackets::after {
+  content: "";
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--border-strong);
+  pointer-events: none;
+}
+
+.frame::before {
+  top: -10px;
+  left: -10px;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: 12px;
+  transform-origin: top left;
+}
+
+.frame::after {
+  top: -10px;
+  right: -10px;
+  border-left: 0;
+  border-bottom: 0;
+  border-top-right-radius: 12px;
+  transform-origin: top right;
+}
+
+.frame-brackets::before {
+  bottom: -10px;
+  left: -10px;
+  border-right: 0;
+  border-top: 0;
+  border-bottom-left-radius: 12px;
+  transform-origin: bottom left;
+}
+
+.frame-brackets::after {
+  bottom: -10px;
+  right: -10px;
+  border-left: 0;
+  border-top: 0;
+  border-bottom-right-radius: 12px;
+  transform-origin: bottom right;
+}
+
+.frame.is-armed::before,
+.frame.is-armed::after,
+.frame.is-armed .frame-brackets::before,
+.frame.is-armed .frame-brackets::after {
+  border-color: rgb(63 115 241 / 0.55);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The brackets close once on arrival, the way the capture border does. */
+  .js .frame.is-armed::before,
+  .js .frame.is-armed::after,
+  .js .frame.is-armed .frame-brackets::before,
+  .js .frame.is-armed .frame-brackets::after {
+    animation: arm 720ms var(--ease) 240ms both;
+  }
+}
+
+@keyframes arm {
+  from {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Media, and the slots standing in until the captures exist. */
+.media img,
+.media video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
+.slot {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 6px;
+  aspect-ratio: var(--ratio, 16 / 9);
+  padding: 24px;
+  border: 1px dashed rgb(63 115 241 / 0.3);
+  border-radius: var(--radius-panel);
+  background: linear-gradient(160deg, #14171f, #0f1116);
+  text-align: center;
+}
+
+.slot-title {
+  color: var(--text-soft);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.slot-note {
+  color: var(--quiet);
+  font-family: ui-monospace, "JetBrains Mono", "DejaVu Sans Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* Buttons */
+.button {
+  display: inline-flex;
+  align-items: center;
+  height: 46px;
+  padding-inline: 22px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.button.primary {
+  background: var(--accent-fill);
+  color: #fff;
+}
+
+.button.primary:hover {
+  background: var(--accent-fill-hover);
+  border-color: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.button.ghost {
+  border-color: var(--border-strong);
+  background: transparent;
+  color: var(--text);
+}
+
+.button.ghost:hover {
+  border-color: var(--muted);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+
+.button:active {
+  transform: translateY(0) scale(0.985);
+}
+
+/* Hero */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  align-items: center;
+  gap: clamp(36px, 5vw, 64px);
+  min-height: min(100dvh, 720px);
+  padding-block: clamp(56px, 9vh, 96px);
+  /* Copy lines up with every other section, the capture runs past the shell
+     and out toward the edge. */
+  padding-left: max(var(--gutter), calc((100% - 1180px) / 2 + var(--gutter)));
+  padding-right: max(var(--gutter), calc((100% - 1740px) / 2));
+}
+
+.hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 34px;
+}
+
+.chip {
+  padding: 5px 11px;
+  border: 1px solid rgb(63 115 241 / 0.32);
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.hero h1 {
+  max-width: 16ch;
+  font-size: clamp(2.25rem, 4.3vw, 3.4rem);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+}
+
+.lede {
+  max-width: 46ch;
+  margin-top: 22px;
+  color: var(--text-soft);
+  font-size: 1.06rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 36px;
+}
+
+/* Demo */
+.demo {
+  padding-block: clamp(40px, 5vw, 72px) var(--section-gap);
+}
+
+.demo h2 {
+  margin-bottom: 34px;
+  font-size: clamp(1.7rem, 3.2vw, 2.5rem);
+  font-weight: 650;
+}
+
+.media.wide {
+  margin-inline: auto;
+}
+
+.caption {
+  max-width: 72ch;
+  margin-top: 26px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* What is different */
+.grid-section {
+  padding-bottom: var(--section-gap);
+}
+
+.grid-section h2,
+.steps h2,
+.status h2 {
+  margin-bottom: 34px;
+  font-size: clamp(1.7rem, 3.2vw, 2.5rem);
+  font-weight: 650;
+}
+
+.bento {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.cell {
+  padding: clamp(22px, 2.6vw, 32px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-1);
+}
+
+.cell h3 {
+  font-size: 1.22rem;
+  font-weight: 650;
+}
+
+.cell p {
+  max-width: 52ch;
+  margin-top: 12px;
+  color: var(--muted);
+}
+
+.cell-wide {
+  grid-column: span 7;
+}
+
+.cell-wide .slot.inset {
+  margin-top: 26px;
+  border-style: solid;
+  border-color: var(--border);
+  background: linear-gradient(160deg, #16191f, #101218);
+}
+
+.cell-keys {
+  grid-column: span 5;
+  border-color: rgb(63 115 241 / 0.3);
+  background:
+    linear-gradient(180deg, rgb(63 115 241 / 0.16), rgb(63 115 241 / 0.03)),
+    var(--surface-1);
+}
+
+.keys {
+  margin: 26px 0 0;
+  display: grid;
+  gap: 14px;
+}
+
+.keys > div {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 14px;
+}
+
+.keys dt {
+  display: flex;
+  gap: 4px;
+}
+
+.keys dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.cell-full {
+  grid-column: span 12;
+  background: var(--surface-0);
+}
+
+.statement {
+  max-width: 76ch;
+  color: var(--text-soft);
+  font-size: clamp(1.12rem, 2vw, 1.5rem);
+  line-height: 1.42;
+  letter-spacing: -0.018em;
+}
+
+/* How a recording gets made */
+.steps {
+  padding-bottom: var(--section-gap);
+}
+
+.step-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-list li {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 210px) minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 24px;
+  padding-block: 30px;
+  border-top: 1px solid var(--border);
+}
+
+.step-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
+}
+
+.step-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: var(--accent-hover);
+}
+
+.step-list h3 {
+  font-size: 1.22rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.step-list p {
+  max-width: 58ch;
+  color: var(--muted);
+}
+
+/* Where it stands */
+.status {
+  padding-bottom: var(--section-gap);
+}
+
+.status-lede {
+  max-width: 62ch;
+  margin-top: -14px;
+  margin-bottom: 44px;
+  color: var(--text-soft);
+  font-size: 1.02rem;
+}
+
+.status-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(28px, 5vw, 64px);
+}
+
+.status-column h3 {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.marked {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.marked li {
+  position: relative;
+  padding: 12px 0 12px 30px;
+  color: var(--text-soft);
+  font-size: 0.97rem;
+}
+
+.marked li::before {
+  content: "";
+  position: absolute;
+  top: 17px;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  background-color: var(--mark, var(--muted));
+  -webkit-mask: var(--mark-glyph) center / contain no-repeat;
+  mask: var(--mark-glyph) center / contain no-repeat;
+}
+
+.marked.yes {
+  --mark: var(--accent-hover);
+  --mark-glyph: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%201024%201024%22%3E%3Cpath%20d=%22M918.64%20310.64l-512%20512c-5.792%205.798-13.797%209.385-22.64%209.385s-16.848-3.587-22.64-9.385l-0-0-224-224c-5.794-5.794-9.378-13.799-9.378-22.64%200-17.683%2014.335-32.018%2032.018-32.018%208.841%200%2016.846%203.584%2022.64%209.378l0%200%20201.36%20201.4%20489.36-489.4c5.794-5.794%2013.799-9.378%2022.64-9.378%2017.683%200%2032.018%2014.335%2032.018%2032.018%200%208.841-3.584%2016.846-9.378%2022.64l0-0z%22/%3E%3C/svg%3E");
+}
+
+.marked.no {
+  --mark: var(--quiet);
+  --mark-glyph: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%201024%201024%22%3E%3Cpath%20d=%22M896%20512c0%2017.673-14.327%2032-32%2032v0h-704c-17.673%200-32-14.327-32-32s14.327-32%2032-32v0h704c17.673%200%2032%2014.327%2032%2032v0z%22/%3E%3C/svg%3E");
+}
+
+.marked.no li {
+  color: var(--muted);
+}
+
+/* Footer */
+footer {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 20px 56px;
+  padding-block: 48px 64px;
+  border-top: 1px solid var(--border);
+}
+
+.footer-wordmark {
+  width: 150px;
+  opacity: 0.7;
+}
+
+.footer-text {
+  display: grid;
+  gap: 10px;
+  max-width: 68ch;
+  color: var(--quiet);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 960px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    min-height: auto;
+    padding-block: clamp(48px, 8vh, 80px) 32px;
+    padding-inline: var(--gutter);
+  }
+
+  .hero h1 {
+    max-width: 18ch;
+  }
+
+  .cell-wide,
+  .cell-keys {
+    grid-column: span 12;
+  }
+
+  .status-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .step-list li {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .step-icon {
+    grid-row: span 2;
+  }
+
+  footer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .wordmark {
+    width: 190px;
+  }
+
+  /* Not enough room beside the panel at this width, so the brackets sit just
+     inside it. */
+  .frame::before,
+  .frame::after,
+  .frame-brackets::before,
+  .frame-brackets::after {
+    width: 22px;
+    height: 22px;
+  }
+
+  .frame::before,
+  .frame-brackets::before {
+    left: 7px;
+  }
+
+  .frame::after,
+  .frame-brackets::after {
+    right: 7px;
+  }
+
+  .frame::before,
+  .frame::after {
+    top: 7px;
+  }
+
+  .frame-brackets::before,
+  .frame-brackets::after {
+    bottom: 7px;
+  }
+
+  .hero-brand {
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 26px;
+  }
+
+  .actions .button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .step-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .step-icon {
+    grid-row: auto;
+  }
+
+  .caption {
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .js [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .button:hover,
+  .button:active {
+    transform: none;
+  }
+}

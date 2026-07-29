@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>PikScreen: record on Wayland, direct the zoom live</title>
+    <meta
+      name="description"
+      content="PikScreen records an application window or a monitor on Wayland and takes your zoom cues while the take is running. Early alpha, Linux only, AGPL-3.0."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="PikScreen" />
+    <meta
+      property="og:description"
+      content="Record on Wayland and direct the zoom while the take is running."
+    />
+    <meta
+      property="og:image"
+      content="https://pikyusufaslan.github.io/pikscreen/media/pikscreen-mark.png"
+    />
+    <link rel="icon" href="media/pikscreen-mark.png" />
+    <link rel="stylesheet" href="landing.css" />
+    <script>
+      document.documentElement.classList.replace("no-js", "js");
+    </script>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="hero-copy" data-reveal>
+          <div class="hero-brand">
+            <img
+              class="wordmark"
+              src="media/pikscreen-wordmark.png"
+              alt="PikScreen"
+              width="975"
+              height="258"
+            />
+            <span class="chip">Early alpha</span>
+          </div>
+          <h1>Direct the zoom while you record.</h1>
+          <p class="lede">
+            Records a window or a monitor on Wayland, takes your zoom cues live,
+            and lets you retime every move afterwards.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/pikyusufaslan/pikscreen"
+              >View the source</a
+            >
+            <a class="button ghost" href="#demo">See it running</a>
+          </div>
+        </div>
+
+        <figure class="media frame is-armed" data-reveal>
+          <span class="frame-brackets" aria-hidden="true"></span>
+          <!-- Replace the slot below with: <img src="media/editor-zoom.png" alt="The PikScreen editor with a zoom marker selected" width="1600" height="900" /> -->
+          <div class="slot" style="--ratio: 16 / 10">
+            <p class="slot-title">The editor, one zoom marker selected</p>
+            <p class="slot-note">capture pending</p>
+          </div>
+        </figure>
+      </section>
+
+      <section class="demo" id="demo">
+        <div class="shell" data-reveal>
+          <h2>One take, directed as it happens</h2>
+        </div>
+        <div class="shell" data-reveal>
+          <figure class="media frame wide">
+            <span class="frame-brackets" aria-hidden="true"></span>
+            <!-- Replace the slot below with: <video src="media/demo.mp4" poster="media/demo-poster.png" autoplay muted loop playsinline></video> -->
+            <div class="slot" style="--ratio: 16 / 9">
+              <p class="slot-title">A recording being directed, then refined</p>
+              <p class="slot-note">capture pending</p>
+            </div>
+          </figure>
+          <figcaption class="caption">
+            <kbd>Alt</kbd> places a three second zoom where the pointer is. Hold it
+            and the zoom stays open until you let go.
+            <kbd>Shift</kbd> <kbd>Alt</kbd> does the same and hides the rendered
+            cursor for that move.
+          </figcaption>
+        </div>
+      </section>
+
+      <section class="grid-section shell">
+        <h2 data-reveal>The moves happen during the take</h2>
+        <div class="bento">
+          <article class="cell cell-wide" data-reveal>
+            <h3>Real window capture</h3>
+            <p>
+              PipeWire and the desktop portal hand over a single application
+              window, not a cropped monitor. Niri, KDE Plasma, GNOME, and
+              Hyprland each have a working path.
+            </p>
+            <!-- Replace the slot below with: <img src="media/hud.png" alt="The PikScreen recording HUD" width="1200" height="360" /> -->
+            <div class="slot inset" style="--ratio: 10 / 3">
+              <p class="slot-title">The recording HUD</p>
+              <p class="slot-note">capture pending</p>
+            </div>
+          </article>
+
+          <article class="cell cell-keys" data-reveal>
+            <h3>Three keys, no second pass</h3>
+            <p>
+              You mark the interesting moment while it is still interesting,
+              instead of hunting for it in a timeline afterwards.
+            </p>
+            <dl class="keys">
+              <div>
+                <dt><kbd>Alt</kbd></dt>
+                <dd>zoom at the pointer</dd>
+              </div>
+              <div>
+                <dt><kbd>Shift</kbd> <kbd>Alt</kbd></dt>
+                <dd>zoom with the cursor hidden</dd>
+              </div>
+              <div>
+                <dt><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>R</kbd></dt>
+                <dd>stop the recording</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="cell cell-full" data-reveal>
+            <p class="statement">
+              Nothing is baked in. Every zoom keeps its own timing, position, and
+              scale, and the recording underneath is left alone until you export.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="steps shell">
+        <h2 data-reveal>How a recording gets made</h2>
+        <ol class="step-list">
+          <li data-reveal>
+            <span class="step-icon" aria-hidden="true">
+              <svg viewBox="0 0 1024 1024">
+                <path
+                  d="M512 96c-229.75 0-416 186.25-416 416s186.25 416 416 416c229.75 0 416-186.25 416-416v0c-0.25-229.65-186.35-415.75-415.976-416l-0.024-0zM512 864c-194.404 0-352-157.596-352-352s157.596-352 352-352c194.404 0 352 157.596 352 352v0c-0.228 194.313-157.687 351.772-351.978 352l-0.022 0zM512 224c-159.058 0-288 128.942-288 288s128.942 288 288 288c159.058 0 288-128.942 288-288v0c-0.182-158.985-129.015-287.818-287.983-288l-0.017-0zM512 736c-123.712 0-224-100.288-224-224s100.288-224 224-224c123.712 0 224 100.288 224 224v0c-0.137 123.657-100.343 223.863-223.987 224l-0.013 0z"
+                />
+              </svg>
+            </span>
+            <h3>Record</h3>
+            <p>
+              Pick a window or a monitor, choose 60, 120, or 180 FPS, and start.
+              The HUD hides itself before capture begins, so it never lands in
+              the video.
+            </p>
+          </li>
+          <li data-reveal>
+            <span class="step-icon" aria-hidden="true">
+              <svg viewBox="0 0 1024 1024">
+                <path
+                  d="M160 352h132c14.63 55.774 64.588 96.251 124 96.251s109.37-40.477 123.801-95.359l0.199-0.892h324c17.673 0 32-14.327 32-32s-14.327-32-32-32v0h-324c-14.63-55.774-64.588-96.251-124-96.251s-109.37 40.477-123.801 95.359l-0.199 0.892h-132c-17.673 0-32 14.327-32 32s14.327 32 32 32v0zM416 256c35.346 0 64 28.654 64 64s-28.654 64-64 64c-35.346 0-64-28.654-64-64v0c0-35.346 28.654-64 64-64v0zM864 672h-68c-14.63-55.774-64.588-96.251-124-96.251s-109.37 40.477-123.801 95.359l-0.199 0.892h-388c-17.673 0-32 14.327-32 32s14.327 32 32 32v0h388c14.63 55.774 64.588 96.251 124 96.251s109.37-40.477 123.801-95.359l0.199-0.892h68c17.673 0 32-14.327 32-32s-14.327-32-32-32v0zM672 768c-35.346 0-64-28.654-64-64s28.654-64 64-64c35.346 0 64 28.654 64 64v0c0 35.346-28.654 64-64 64v0z"
+                />
+              </svg>
+            </span>
+            <h3>Refine</h3>
+            <p>
+              The editor opens on the take. Retime and resize each zoom, trim the
+              ends, set the scene and background, adjust the cursor, and balance
+              the two audio channels.
+            </p>
+          </li>
+          <li data-reveal>
+            <span class="step-icon" aria-hidden="true">
+              <svg viewBox="0 0 1024 1024">
+                <path
+                  d="M864 448v384c0 35.346-28.654 64-64 64v0h-576c-35.346 0-64-28.654-64-64v0-384c0-35.346 28.654-64 64-64v0h96c17.673 0 32 14.327 32 32s-14.327 32-32 32v0h-96v384h576v-384h-96c-17.673 0-32-14.327-32-32s14.327-32 32-32v0h96c35.346 0 64 28.654 64 64v0zM374.64 278.64l105.36-105.4v370.76c0 17.673 14.327 32 32 32s32-14.327 32-32v0-370.76l105.36 105.4c5.794 5.794 13.799 9.378 22.64 9.378 17.683 0 32.018-14.335 32.018-32.018 0-8.841-3.584-16.846-9.378-22.64l-0-0-160-160c-5.792-5.798-13.797-9.385-22.64-9.385s-16.848 3.587-22.64 9.385l-0 0-160 160c-5.794 5.794-9.378 13.799-9.378 22.64 0 17.683 14.335 32.018 32.018 32.018 8.841 0 16.846-3.584 22.64-9.378v0z"
+                />
+              </svg>
+            </span>
+            <h3>Export</h3>
+            <p>
+              Render the timeline to MP4 at the quality profile you picked and
+              save it wherever you want it.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="status shell">
+        <h2 data-reveal>Where it stands</h2>
+        <p class="status-lede" data-reveal>
+          This is the first public alpha. The recording and editing pipeline is
+          usable every day. Packaging and compositor coverage are not finished.
+        </p>
+        <div class="status-columns">
+          <div class="status-column" data-reveal>
+            <h3>Working today</h3>
+            <ul class="marked yes">
+              <li>Window and monitor capture through PipeWire and the portals</li>
+              <li>60, 120, and 180 FPS profiles with selectable quality</li>
+              <li>System audio and microphone on independent levels</li>
+              <li>Live zoom markers with smooth transitions between them</li>
+              <li>Cursor rendering, sizing, hiding, and click effects</li>
+              <li>Non-destructive editor and MP4 export</li>
+            </ul>
+          </div>
+          <div class="status-column" data-reveal>
+            <h3>Not there yet</h3>
+            <ul class="marked no">
+              <li>No packaged release. You build it from source</li>
+              <li>
+                Niri's full cursor and window tracking needs IPC additions that
+                are still under review upstream
+              </li>
+              <li>Hardware and compositor coverage needs much wider testing</li>
+              <li>X11, Windows, and macOS are out of scope for this alpha</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="shell">
+      <img
+        class="wordmark footer-wordmark"
+        src="media/pikscreen-wordmark.png"
+        alt="PikScreen"
+        width="975"
+        height="258"
+      />
+      <div class="footer-text">
+        <p>
+          Licensed under
+          <a href="https://www.gnu.org/licenses/agpl-3.0.html">GNU AGPL-3.0-or-later</a>.
+        </p>
+        <p>
+          A fork of
+          <a href="https://github.com/webadderallorg/Recordly">Recordly</a>, which
+          began as a fork of OpenScreen by Siddharth Vaddem. PikScreen is an
+          independent project and does not use the Recordly name or branding.
+        </p>
+        <p>
+          <a href="https://github.com/pikyusufaslan/pikscreen"
+            >github.com/pikyusufaslan/pikscreen</a
+          >
+        </p>
+      </div>
+    </footer>
+
+    <script>
+      // Sections settle in as they arrive so the page reads in the order it was
+      // written. Everything stays visible if this never runs.
+      addEventListener("DOMContentLoaded", () => {
+        const targets = document.querySelectorAll("[data-reveal]");
+        const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (reduced || !("IntersectionObserver" in window)) {
+          targets.forEach((el) => el.classList.add("is-in"));
+          return;
+        }
+        const seen = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              entry.target.classList.add("is-in");
+              seen.unobserve(entry.target);
+            }
+          },
+          { rootMargin: "0px 0px -10% 0px", threshold: 0.12 },
+        );
+        targets.forEach((el) => seen.observe(el));
+      });
+    </script>
+  </body>
+</html>
