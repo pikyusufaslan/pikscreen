@@ -1,4 +1,5 @@
 use super::*;
+use crate::editor::Segment;
 
 pub(super) const RECORDLY_TAHOE_CURSOR_HEIGHT: f64 = 80.0;
 
@@ -131,8 +132,7 @@ pub(super) fn render_final_video(
     width: u32,
     height: u32,
     duration_ms: u64,
-    trim_start_ms: u64,
-    trim_end_ms: u64,
+    segments: &[Segment],
     cursor_strategy: CursorStrategy,
     settings: RecordingSettings,
 ) -> Result<(), String> {
@@ -282,14 +282,13 @@ pub(super) fn render_final_video(
         ));
         stage_label = "stage_webcam".to_owned();
     }
-    append_final_trim_filter(
+    append_segment_filter(
         &mut filter,
         &stage_label,
         audio_path.is_some().then_some(audio_input_index),
-        trim_start_ms,
-        trim_end_ms,
+        segments,
     );
-    let output_duration_ms = trim_end_ms.saturating_sub(trim_start_ms);
+    let output_duration_ms: u64 = segments.iter().map(Segment::duration_ms).sum();
     let fps = settings.fps_argument();
     let cursor_video_size = format!("{CURSOR_TILE_WIDTH}x{CURSOR_TILE_HEIGHT}");
     let (crf, preset) = settings.quality.final_encoder_profile();
@@ -417,23 +416,74 @@ pub(super) fn render_final_video(
     result
 }
 
-pub(super) fn append_final_trim_filter(
+/// Cut the composed timeline down to the segments that survive, in order.
+///
+/// The scene is built over the whole recording, so every overlay is already
+/// where it belongs in source time; taking pieces out of the end is what makes
+/// a cut. One segment is the old single trim, and is emitted without a split so
+/// the untouched case produces the graph it always did.
+pub(super) fn append_segment_filter(
     filter: &mut String,
     stage_label: &str,
     audio_input_index: Option<usize>,
-    trim_start_ms: u64,
-    trim_end_ms: u64,
+    segments: &[Segment],
 ) {
-    let trim_start_seconds = trim_start_ms as f64 / 1_000.0;
-    let trim_end_seconds = trim_end_ms as f64 / 1_000.0;
-    filter.push_str(&format!(
-        ";[{stage_label}]trim=start={trim_start_seconds:.6}:end={trim_end_seconds:.6},setpts=PTS-STARTPTS,format=yuv420p[out]"
-    ));
-    if let Some(audio_input_index) = audio_input_index {
+    let seconds = |ms: u64| ms as f64 / 1_000.0;
+
+    if let [only] = segments {
         filter.push_str(&format!(
-            ";[{audio_input_index}:a:0]atrim=start={trim_start_seconds:.6}:end={trim_end_seconds:.6},asetpts=PTS-STARTPTS[out_audio]"
+            ";[{stage_label}]trim=start={:.6}:end={:.6},setpts=PTS-STARTPTS,format=yuv420p[out]",
+            seconds(only.start_ms),
+            seconds(only.end_ms)
+        ));
+    } else {
+        let count = segments.len();
+        filter.push_str(&format!(";[{stage_label}]split={count}"));
+        for index in 0..count {
+            filter.push_str(&format!("[seg{index}]"));
+        }
+        for (index, segment) in segments.iter().enumerate() {
+            filter.push_str(&format!(
+                ";[seg{index}]trim=start={:.6}:end={:.6},setpts=PTS-STARTPTS[cut{index}]",
+                seconds(segment.start_ms),
+                seconds(segment.end_ms)
+            ));
+        }
+        filter.push(';');
+        for index in 0..count {
+            filter.push_str(&format!("[cut{index}]"));
+        }
+        filter.push_str(&format!("concat=n={count}:v=1:a=0,format=yuv420p[out]"));
+    }
+
+    let Some(audio_input_index) = audio_input_index else {
+        return;
+    };
+    if let [only] = segments {
+        filter.push_str(&format!(
+            ";[{audio_input_index}:a:0]atrim=start={:.6}:end={:.6},asetpts=PTS-STARTPTS[out_audio]",
+            seconds(only.start_ms),
+            seconds(only.end_ms)
+        ));
+        return;
+    }
+    let count = segments.len();
+    filter.push_str(&format!(";[{audio_input_index}:a:0]asplit={count}"));
+    for index in 0..count {
+        filter.push_str(&format!("[aseg{index}]"));
+    }
+    for (index, segment) in segments.iter().enumerate() {
+        filter.push_str(&format!(
+            ";[aseg{index}]atrim=start={:.6}:end={:.6},asetpts=PTS-STARTPTS[acut{index}]",
+            seconds(segment.start_ms),
+            seconds(segment.end_ms)
         ));
     }
+    filter.push(';');
+    for index in 0..count {
+        filter.push_str(&format!("[acut{index}]"));
+    }
+    filter.push_str(&format!("concat=n={count}:v=0:a=1[out_audio]"));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2260,14 +2310,78 @@ mod tests {
     }
 
     #[test]
-    fn final_trim_is_part_of_the_single_render_graph() {
+    fn one_segment_renders_as_the_single_trim_it_always_was() {
         let mut filter = "[scene]null[stage]".to_owned();
-        append_final_trim_filter(&mut filter, "stage", Some(3), 1_250, 4_750);
+        append_segment_filter(
+            &mut filter,
+            "stage",
+            Some(3),
+            &[Segment {
+                start_ms: 1_250,
+                end_ms: 4_750,
+            }],
+        );
         assert!(filter.contains(
             "[stage]trim=start=1.250000:end=4.750000,setpts=PTS-STARTPTS,format=yuv420p[out]"
         ));
         assert!(filter
             .contains("[3:a:0]atrim=start=1.250000:end=4.750000,asetpts=PTS-STARTPTS[out_audio]"));
+        // Nothing to join, so no split or concat is introduced.
+        assert!(!filter.contains("split"));
+        assert!(!filter.contains("concat"));
+    }
+
+    #[test]
+    fn cuts_are_stitched_back_together_in_order() {
+        let mut filter = "[scene]null[stage]".to_owned();
+        append_segment_filter(
+            &mut filter,
+            "stage",
+            Some(3),
+            &[
+                Segment {
+                    start_ms: 0,
+                    end_ms: 1_000,
+                },
+                Segment {
+                    start_ms: 4_000,
+                    end_ms: 6_500,
+                },
+            ],
+        );
+
+        assert!(filter.contains("[stage]split=2[seg0][seg1]"));
+        assert!(filter.contains("[seg0]trim=start=0.000000:end=1.000000,setpts=PTS-STARTPTS[cut0]"));
+        assert!(filter.contains("[seg1]trim=start=4.000000:end=6.500000,setpts=PTS-STARTPTS[cut1]"));
+        assert!(filter.contains("[cut0][cut1]concat=n=2:v=1:a=0,format=yuv420p[out]"));
+
+        // The audio follows the same cuts.
+        assert!(filter.contains("[3:a:0]asplit=2[aseg0][aseg1]"));
+        assert!(filter.contains("[acut0][acut1]concat=n=2:v=0:a=1[out_audio]"));
+    }
+
+    #[test]
+    fn a_silent_recording_gets_no_audio_branch() {
+        let mut filter = "[scene]null[stage]".to_owned();
+        append_segment_filter(
+            &mut filter,
+            "stage",
+            None,
+            &[
+                Segment {
+                    start_ms: 0,
+                    end_ms: 1_000,
+                },
+                Segment {
+                    start_ms: 2_000,
+                    end_ms: 3_000,
+                },
+            ],
+        );
+
+        assert!(filter.contains("concat=n=2:v=1:a=0"));
+        assert!(!filter.contains("out_audio"));
+        assert!(!filter.contains("atrim"));
     }
 
     #[test]

@@ -24,11 +24,32 @@ pub struct SessionManifest {
     pub duration_ms: u64,
     pub trim_start_ms: u64,
     pub trim_end_ms: u64,
+    #[serde(default)]
+    pub segments: Vec<Segment>,
     pub settings: RecordingSettings,
     pub markers: Vec<Marker>,
     pub cursor_samples: Vec<CursorSample>,
     pub click_samples: Vec<ClickSample>,
     pub synthetic_cursor: bool,
+}
+
+/// A stretch of the recording that survives into the export.
+///
+/// One segment covering the whole take is the untouched recording; cutting
+/// splits a segment in two and deleting one drops it, with what follows moving
+/// up. Times are positions in the source, so overlays built against the source
+/// timeline stay correct whatever the cuts are.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Segment {
+    pub start_ms: u64,
+    pub end_ms: u64,
+}
+
+impl Segment {
+    pub fn duration_ms(&self) -> u64 {
+        self.end_ms.saturating_sub(self.start_ms)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -37,13 +58,41 @@ pub struct EditorChanges {
     pub markers: Vec<Marker>,
     pub trim_start_ms: u64,
     pub trim_end_ms: u64,
+    /// Empty from a client that predates cutting, which means the trim range.
+    #[serde(default)]
+    pub segments: Vec<Segment>,
     pub settings: RecordingSettings,
 }
 
 impl EditorChanges {
+    /// What the export should stitch together, in order.
+    ///
+    /// A client that predates cutting sends no segments and means the trim
+    /// range, which is the same thing said the old way.
+    pub fn segments(&self) -> Vec<Segment> {
+        if self.segments.is_empty() {
+            vec![Segment {
+                start_ms: self.trim_start_ms,
+                end_ms: self.trim_end_ms,
+            }]
+        } else {
+            self.segments.clone()
+        }
+    }
+
     pub fn validate(&self, duration_ms: u64) -> Result<(), String> {
         if self.trim_start_ms >= self.trim_end_ms || self.trim_end_ms > duration_ms {
             return Err("Editor trim range must stay inside the recording.".to_owned());
+        }
+        let mut previous_end = 0;
+        for segment in &self.segments {
+            if segment.start_ms >= segment.end_ms || segment.end_ms > duration_ms {
+                return Err("Editor cut must stay inside the recording.".to_owned());
+            }
+            if segment.start_ms < previous_end {
+                return Err("Editor cuts must be in order and must not overlap.".to_owned());
+            }
+            previous_end = segment.end_ms;
         }
         for marker in &self.markers {
             if marker.time_ms > duration_ms
@@ -142,6 +191,10 @@ fn create_session_in_directory(
         height,
         duration_ms,
         trim_start_ms: 0,
+        segments: vec![Segment {
+            start_ms: 0,
+            end_ms: duration_ms,
+        }],
         trim_end_ms: duration_ms,
         settings,
         markers,
@@ -212,9 +265,82 @@ fn valid_id(id: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn changes_with(segments: Vec<Segment>) -> EditorChanges {
+        EditorChanges {
+            segments,
+            markers: Vec::new(),
+            trim_start_ms: 0,
+            trim_end_ms: 100,
+            settings: test_settings(),
+        }
+    }
+
+    #[test]
+    fn a_client_without_cuts_still_means_its_trim_range() {
+        let changes = EditorChanges {
+            trim_start_ms: 20,
+            trim_end_ms: 80,
+            ..changes_with(Vec::new())
+        };
+
+        let segments = changes.segments();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_ms, 20);
+        assert_eq!(segments[0].end_ms, 80);
+    }
+
+    #[test]
+    fn cuts_are_kept_as_sent() {
+        let changes = changes_with(vec![
+            Segment {
+                start_ms: 0,
+                end_ms: 10,
+            },
+            Segment {
+                start_ms: 40,
+                end_ms: 60,
+            },
+        ]);
+
+        assert!(changes.validate(100).is_ok());
+        assert_eq!(changes.segments().len(), 2);
+        assert_eq!(changes.segments()[1].start_ms, 40);
+    }
+
+    #[test]
+    fn rejects_cuts_that_overlap_or_run_backwards() {
+        let overlapping = changes_with(vec![
+            Segment {
+                start_ms: 0,
+                end_ms: 50,
+            },
+            Segment {
+                start_ms: 40,
+                end_ms: 60,
+            },
+        ]);
+        assert!(overlapping.validate(100).is_err());
+
+        let backwards = changes_with(vec![Segment {
+            start_ms: 60,
+            end_ms: 40,
+        }]);
+        assert!(backwards.validate(100).is_err());
+    }
+
+    #[test]
+    fn rejects_a_cut_past_the_end_of_the_recording() {
+        let changes = changes_with(vec![Segment {
+            start_ms: 0,
+            end_ms: 140,
+        }]);
+        assert!(changes.validate(100).is_err());
+    }
+
     #[test]
     fn rejects_marker_outside_frame() {
         let changes = EditorChanges {
+            segments: Vec::new(),
             markers: vec![Marker {
                 time_ms: 10,
                 x: 1.1,
