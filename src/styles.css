@@ -1264,6 +1264,7 @@ body[data-surface="editor"] .settings-shell {
 }
 
 .editor-topbar {
+  position: relative;
   z-index: 10;
   display: grid;
   padding: 0 12px;
@@ -1285,10 +1286,14 @@ body[data-surface="editor"] .settings-shell {
 }
 
 .editor-project-name {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   display: grid;
   grid-template-rows: auto auto;
   justify-items: center;
   text-align: center;
+  transform: translate(-50%, -50%);
 }
 
 .brand-wordmark--editor {
@@ -1693,17 +1698,31 @@ body[data-surface="editor"] .settings-shell {
   display: none;
 }
 
+/* Carries the colour of the zoom it belongs to, the same blue and orange the
+   timeline uses, and can be picked up and moved. */
 .editor-focus-preview {
+  --focus-tint: 63 115 241;
+  --focus-edge: #77a7ff;
   position: absolute;
   z-index: 5;
   min-width: 36px;
   aspect-ratio: 16 / 9;
-  border: 2px solid #77a7ff;
+  border: 2px solid var(--focus-edge);
   border-radius: 5px;
-  background: rgb(63 115 241 / 0.06);
-  box-shadow: 0 0 0 9999px rgb(2 4 8 / 0.18), 0 0 18px rgb(63 115 241 / 0.24);
-  pointer-events: none;
+  background: rgb(var(--focus-tint) / 0.14);
+  box-shadow: 0 0 0 9999px rgb(2 4 8 / 0.18), 0 0 18px rgb(var(--focus-tint) / 0.24);
+  cursor: grab;
   transform: translate(-50%, -50%);
+}
+
+.editor-focus-preview.cursor-hidden {
+  --focus-tint: 255 126 53;
+  --focus-edge: #ffa25b;
+}
+
+.editor-focus-preview.dragging {
+  cursor: grabbing;
+  background: rgb(var(--focus-tint) / 0.2);
 }
 
 .editor-focus-preview span {
@@ -1714,8 +1733,9 @@ body[data-surface="editor"] .settings-shell {
   height: 6px;
   border: 1px solid #e4edff;
   border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 4px rgb(63 115 241 / 0.2);
+  background: var(--focus-edge);
+  box-shadow: 0 0 0 4px rgb(var(--focus-tint) / 0.2);
+  pointer-events: none;
   transform: translate(-50%, -50%);
 }
 
@@ -1724,7 +1744,7 @@ body[data-surface="editor"] .settings-shell {
   width: max-content;
   max-width: 100%;
   height: 44px;
-  padding: 4px 6px 4px 12px;
+  padding: 4px 14px;
   margin: 0 auto;
   align-items: center;
   justify-content: center;

@@ -1026,6 +1026,7 @@ async function setupEditor() {
     markerYOutput.value = `${markerY.value}%`;
     markerDurationInput.value = (markerTotalDuration(marker) / 1000).toFixed(1);
     markerHideCursor.checked = marker.hideCursor;
+    focusPreview.classList.toggle("cursor-hidden", marker.hideCursor);
     focusPreview.style.left = `${marker.x * 100}%`;
     focusPreview.style.top = `${marker.y * 100}%`;
     focusPreview.style.width = `${Math.min(82, 100 / depth)}%`;
@@ -1049,7 +1050,12 @@ async function setupEditor() {
     playhead.style.width = `${laneWidth}px`;
     playheadLine.style.left = `${laneLeft + laneWidth * ratio}px`;
   };
-  const beginTimelineDrag = (event: PointerEvent, marker: ZoomMarker, mode: "move" | "start" | "end") => {
+  const beginTimelineDrag = (
+    event: PointerEvent,
+    marker: ZoomMarker,
+    mode: "move" | "start" | "end",
+    region: HTMLElement,
+  ) => {
     event.preventDefault();
     event.stopPropagation();
     pushHistory();
@@ -1059,6 +1065,18 @@ async function setupEditor() {
     const originalDuration = markerTotalDuration(marker);
     const originalEnd = Math.min(session.durationMs, originalStart + originalDuration);
     selectMarker(marker);
+    // Rebuilding the lane on every pointer move destroys and recreates the
+    // region being dragged, which is what made it stutter. Move the element
+    // that is already on screen, once a frame, and rebuild once at the end.
+    let frame = 0;
+    const paint = () => {
+      frame = 0;
+      const endMs = Math.min(session.durationMs, marker.timeMs + markerTotalDuration(marker));
+      region.style.left = `${(marker.timeMs / session.durationMs) * 100}%`;
+      region.style.width = `${Math.max(1.6, ((endMs - marker.timeMs) / session.durationMs) * 100)}%`;
+      updatePlayhead();
+      updateLivePreview(marker.timeMs);
+    };
     const move = (nextEvent: PointerEvent) => {
       const delta = Math.round((nextEvent.clientX - startX) / rect.width * session.durationMs);
       if (mode === "move") {
@@ -1073,16 +1091,16 @@ async function setupEditor() {
       invalidatePreviewCameraTrack();
       playhead.value = String(marker.timeMs);
       markDirty();
-      syncMarkerPanel();
-      syncTimeline();
-      updateLivePreview(marker.timeMs);
+      if (!frame) frame = requestAnimationFrame(paint);
     };
     const end = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
+      if (frame) cancelAnimationFrame(frame);
       session.markers.sort((left, right) => left.timeMs - right.timeMs);
       selectedMarker = session.markers.indexOf(marker);
       syncTimeline();
+      syncMarkerPanel();
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end, { once: true });
@@ -1116,7 +1134,12 @@ async function setupEditor() {
       });
       region.addEventListener("pointerdown", (event) => {
         const target = event.target as HTMLElement;
-        beginTimelineDrag(event, marker, target.classList.contains("start") ? "start" : target.classList.contains("end") ? "end" : "move");
+        beginTimelineDrag(
+          event,
+          marker,
+          target.classList.contains("start") ? "start" : target.classList.contains("end") ? "end" : "move",
+          region,
+        );
       });
       markerLane.append(region);
     });
@@ -1763,6 +1786,47 @@ async function setupEditor() {
   document.addEventListener("visibilitychange", handleEditorVisibility);
   window.addEventListener("pagehide", cleanupEditor, { once: true });
   window.addEventListener("beforeunload", cleanupEditor, { once: true });
+  focusPreview.addEventListener("pointerdown", (event) => {
+    const marker = selected();
+    if (!marker || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = cameraFrame.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    pushHistory();
+    focusPreview.classList.add("dragging");
+    let frame = 0;
+    let pending: { x: number; y: number } | null = null;
+    const paint = () => {
+      frame = 0;
+      if (!pending) return;
+      marker.x = pending.x;
+      marker.y = pending.y;
+      pending = null;
+      focusPreview.style.left = `${marker.x * 100}%`;
+      focusPreview.style.top = `${marker.y * 100}%`;
+      invalidatePreviewCameraTrack();
+      updateLivePreview();
+    };
+    const move = (next: PointerEvent) => {
+      pending = {
+        x: Math.max(0, Math.min(1, (next.clientX - rect.left) / rect.width)),
+        y: Math.max(0, Math.min(1, (next.clientY - rect.top) / rect.height)),
+      };
+      if (!frame) frame = requestAnimationFrame(paint);
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      if (frame) cancelAnimationFrame(frame);
+      paint();
+      focusPreview.classList.remove("dragging");
+      markDirty();
+      syncAll();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end, { once: true });
+  });
   previewStage.addEventListener("click", (event) => {
     const marker = selected();
     if (!marker || !(event.target instanceof HTMLElement) || event.target.closest("button")) return;
