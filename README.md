@@ -7,6 +7,10 @@
 
 <p align="center"><strong>Screen Studio polish for Linux — directed live as you record.</strong></p>
 
+<p align="center">
+  <a href="https://pikyusufaslan.github.io/pikscreen/#demo"><img src="docs/media/demo.gif" alt="A window recording with zoom cues placed live during the take" width="760"></a>
+</p>
+
 <p align="center">Place smooth zoom cues during the take, then refine every move non-destructively.</p>
 
 <p align="center">
