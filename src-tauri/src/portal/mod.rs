@@ -581,11 +581,21 @@ impl VideoQuality {
 
     fn final_encoder_profile(self) -> (&'static str, &'static str) {
         let (crf, _) = self.encoder_profile();
-        // On this RX 580, the VAAPI H.264 path is much slower than x264 for
-        // final exports. Keep the chosen CRF while preferring a fast CPU
-        // encode so post-processing does not turn a short recording into a
-        // long wait.
-        (crf, "ultrafast")
+        // The VAAPI H.264 path is much slower than x264 here, so exports stay
+        // on the CPU. They used to run at "ultrafast", which turns off CABAC
+        // and most of the motion search and made an 18 s export 45 MB. Measured
+        // at 1920x1004 and 120 FPS against a lossless reference of the same
+        // frames:
+        //
+        //   ultrafast  16.3 Mbps  SSIM 0.98889  PSNR 48.40 dB
+        //   veryfast    4.2 Mbps  SSIM 0.98669  PSNR 46.29 dB
+        //   faster      5.4 Mbps  SSIM 0.98792  PSNR 47.11 dB
+        //   medium      6.6 Mbps  SSIM 0.98792  PSNR 47.46 dB
+        //
+        // "faster" reaches the same SSIM as "medium" for fewer bits and less
+        // time, and costs a few percent of a render that the filter graph
+        // dominates anyway.
+        (crf, "faster")
     }
 
     fn realtime_source_encoder_profile(self) -> (&'static str, &'static str) {
@@ -2607,10 +2617,7 @@ mod tests {
             settings.quality.realtime_source_encoder_profile(),
             ("16", "ultrafast")
         );
-        assert_eq!(
-            settings.quality.final_encoder_profile(),
-            ("16", "ultrafast")
-        );
+        assert_eq!(settings.quality.final_encoder_profile(), ("16", "faster"));
         assert_eq!(settings.cursor_smoothing, 100);
         assert_eq!(settings.cursor_size, 100);
         assert_eq!(settings.zoom_scale, 1.8);
@@ -2668,14 +2675,24 @@ mod tests {
 
     #[test]
     fn final_export_keeps_high_quality_crf_without_a_slow_preset() {
-        assert_eq!(
-            VideoQuality::High.final_encoder_profile(),
-            ("18", "ultrafast")
-        );
+        assert_eq!(VideoQuality::High.final_encoder_profile(), ("18", "faster"));
         assert_eq!(
             VideoQuality::Balanced.final_encoder_profile(),
-            ("20", "ultrafast")
+            ("20", "faster")
         );
+        // "ultrafast" turns off CABAC and tripled the export for no visible
+        // gain, "slow" would spend render time the export does not need.
+        for quality in [
+            VideoQuality::Balanced,
+            VideoQuality::High,
+            VideoQuality::Ultra,
+        ] {
+            let (_, preset) = quality.final_encoder_profile();
+            assert!(!matches!(
+                preset,
+                "ultrafast" | "slow" | "slower" | "veryslow"
+            ));
+        }
     }
 
     #[test]
