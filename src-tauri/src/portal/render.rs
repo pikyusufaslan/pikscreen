@@ -212,25 +212,18 @@ pub(super) fn render_final_video(
     let cursor_input_index = cursor_render.as_ref().map(|_| 1);
     let click_input_start = 1 + usize::from(cursor_input_index.is_some());
     let audio_input_index = click_input_start + click_tracks.len();
-    // Wallpaper, mask and shadow are only fed to ffmpeg when the scene is on,
-    // so everything after them shifts by three.
-    let wallpaper_input_index = audio_input_index + usize::from(audio_path.is_some());
-    let mask_input_index = wallpaper_input_index + 1;
-    let shadow_input_index = wallpaper_input_index + 2;
-    let webcam_input_index = wallpaper_input_index + if scene { 3 } else { 0 };
+    // Background and mask are only fed to ffmpeg when the scene is on, so
+    // everything after them shifts by two.
+    let background_input_index = audio_input_index + usize::from(audio_path.is_some());
+    let mask_input_index = background_input_index + 1;
+    let webcam_input_index = background_input_index + if scene { 2 } else { 0 };
     let webcam_mask_input_index = webcam_input_index + 1;
     let mut filter = if scene {
-        let mut filter = recordly_card_filter(
-            width,
-            height,
-            duration_ms,
-            settings.fps,
-            mask_input_index,
-            shadow_input_index,
-        );
+        let mut filter =
+            recordly_card_filter(width, height, duration_ms, settings.fps, mask_input_index);
         filter.push(';');
-        filter.push_str(&wallpaper_background_filter(
-            wallpaper_input_index,
+        filter.push_str(&scene_background_filter(
+            background_input_index,
             "card",
             "scene",
         ));
@@ -347,19 +340,13 @@ pub(super) fn render_final_video(
             "-framerate",
             &fps,
             "-i",
-            frame_assets.wallpaper_path.to_string_lossy().as_ref(),
+            frame_assets.background_path.to_string_lossy().as_ref(),
             "-loop",
             "1",
             "-framerate",
             &fps,
             "-i",
             frame_assets.mask_path.to_string_lossy().as_ref(),
-            "-loop",
-            "1",
-            "-framerate",
-            &fps,
-            "-i",
-            frame_assets.shadow_path.to_string_lossy().as_ref(),
         ]);
     }
     if let (Some(webcam_path), Some(webcam_assets)) = (webcam_path, webcam_assets.as_ref()) {
@@ -1519,12 +1506,11 @@ pub(super) fn recordly_card_filter(
     duration_ms: u64,
     fps: u32,
     mask_input_index: usize,
-    shadow_input_index: usize,
 ) -> String {
     let (content_width, content_height) = recordly_padded_size(width, height, true);
     let padded_duration = duration_ms as f64 / 1_000.0 + 1.0 / fps.max(1) as f64;
     format!(
-        "[0:v]setpts=PTS-STARTPTS,fps={fps},tpad=stop_mode=clone:stop_duration={padded_duration:.6},scale={content_width}:{content_height}:flags=lanczos,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=rgba[content];[{mask_input_index}:v]format=gray,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black[frame_mask];[content][frame_mask]alphamerge[content_with_mask];[{shadow_input_index}:v]format=rgba[frame_shadow];[frame_shadow][content_with_mask]overlay=0:0:format=auto:shortest=1[card]"
+        "[0:v]setpts=PTS-STARTPTS,fps={fps},tpad=stop_mode=clone:stop_duration={padded_duration:.6},scale={content_width}:{content_height}:flags=lanczos,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,format=rgba[content];[{mask_input_index}:v]format=gray,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black[frame_mask];[content][frame_mask]alphamerge[card]"
     )
 }
 
@@ -1542,20 +1528,22 @@ pub(super) fn full_frame_scene_filter(
     )
 }
 
-pub(super) fn wallpaper_background_filter(
-    wallpaper_input_index: usize,
+pub(super) fn scene_background_filter(
+    background_input_index: usize,
     card_label: &str,
     output_label: &str,
 ) -> String {
     format!(
-        "[{wallpaper_input_index}:v]format=rgba[wallpaper];[wallpaper][{card_label}]overlay=0:0:format=auto:shortest=1,format=rgba[{output_label}]"
+        "[{background_input_index}:v]format=rgba[background];[background][{card_label}]overlay=0:0:format=auto:shortest=1,format=rgba[{output_label}]"
     )
 }
 
 pub(super) struct RecordlyFrameAssets {
     pub(super) mask_path: PathBuf,
-    pub(super) wallpaper_path: PathBuf,
-    pub(super) shadow_path: PathBuf,
+    /// Wallpaper with the card's shadow already composited onto it. Both are
+    /// the same on every frame, so compositing them once here saves the render
+    /// a full frame overlay at the capture rate.
+    pub(super) background_path: PathBuf,
 }
 
 pub(super) fn recordly_frame_assets(
@@ -1608,13 +1596,56 @@ pub(super) fn recordly_frame_assets(
             height,
         )?;
     }
+    let background_path = temporary_file("recordly-static-background", "png");
+    flatten_background(&wallpaper_path, &shadow_path, &background_path)?;
     let _ = std::fs::remove_file(mask_svg_path);
     let _ = std::fs::remove_file(shadow_svg_path);
+    let _ = std::fs::remove_file(wallpaper_path);
+    let _ = std::fs::remove_file(shadow_path);
     Ok(RecordlyFrameAssets {
         mask_path,
-        wallpaper_path,
-        shadow_path,
+        background_path,
     })
+}
+
+/// Lays the shadow over the wallpaper once, the same source-over the render
+/// used to run per frame. Compositing is associative, so wallpaper over shadow
+/// over card gives the same picture as this background over the card.
+fn flatten_background(
+    wallpaper_path: &PathBuf,
+    shadow_path: &PathBuf,
+    output_path: &PathBuf,
+) -> Result<(), String> {
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            wallpaper_path.to_string_lossy().as_ref(),
+            "-i",
+            shadow_path.to_string_lossy().as_ref(),
+            "-filter_complex",
+            "[0:v]format=rgba[wallpaper];[wallpaper][1:v]overlay=0:0:format=auto[background]",
+            "-map",
+            "[background]",
+            "-frames:v",
+            "1",
+            "-update",
+            "1",
+            output_path.to_string_lossy().as_ref(),
+        ])
+        .output()
+        .map_err(|error| format!("Could not compose the Recordly background: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Could not compose the Recordly background: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 pub(super) fn rasterize_wallpaper(
@@ -1995,7 +2026,9 @@ mod tests {
         assert!(scene <= sendcmd && sendcmd < crop && crop < scale);
         assert!(!filter.contains("pad="));
         // Planar before the resample, and nothing repacks it afterwards.
-        let planar = filter.find("format=gbrp").expect("planar before the camera");
+        let planar = filter
+            .find("format=gbrp")
+            .expect("planar before the camera");
         assert!(planar < crop);
         assert!(!filter.contains("format=rgba"));
         assert!(filter.ends_with("scale=1920:1080:flags=lanczos[screen]"));
@@ -2286,24 +2319,24 @@ mod tests {
 
     #[test]
     fn recordly_scene_is_composited_before_camera_zoom() {
-        let card_filter = recordly_card_filter(1_920, 1_080, 16_800, 120, 4, 5);
+        let card_filter = recordly_card_filter(1_920, 1_080, 16_800, 120, 4);
         assert!(card_filter.contains("tpad=stop_mode=clone:stop_duration=16.808333"));
         assert!(card_filter.contains("[0:v]setpts=PTS-STARTPTS,fps=120"));
         assert!(card_filter.contains("[4:v]format=gray"));
-        assert!(card_filter.contains("[5:v]format=rgba[frame_shadow]"));
-        assert!(card_filter.contains("[content][frame_mask]alphamerge[content_with_mask]"));
-        assert!(card_filter
-            .contains("[frame_shadow][content_with_mask]overlay=0:0:format=auto:shortest=1[card]"));
+        assert!(card_filter.contains("[content][frame_mask]alphamerge[card]"));
+        // The shadow rides on the background now, so the render no longer lays
+        // it down a second time for every frame.
+        assert!(!card_filter.contains("frame_shadow"));
         assert!(!card_filter.contains("maskedmerge"));
         assert!(card_filter.contains("color=black[frame_mask]"));
         assert!(!card_filter.contains("format=yuv420p[frame_mask]"));
         assert!(card_filter.contains("scale=1766:994:flags=lanczos"));
         assert!(card_filter.contains("pad=1920:1080"));
 
-        let wallpaper_filter = wallpaper_background_filter(3, "card", "scene");
-        assert!(wallpaper_filter.contains("[3:v]format=rgba[wallpaper]"));
+        let wallpaper_filter = scene_background_filter(3, "card", "scene");
+        assert!(wallpaper_filter.contains("[3:v]format=rgba[background]"));
         assert!(wallpaper_filter
-            .contains("[wallpaper][card]overlay=0:0:format=auto:shortest=1,format=rgba[scene]"));
+            .contains("[background][card]overlay=0:0:format=auto:shortest=1,format=rgba[scene]"));
         let camera_filter = camera_filter_chain(
             "scene",
             "screen",
@@ -2314,7 +2347,7 @@ mod tests {
         let complete_filter = format!("{card_filter};{wallpaper_filter};{camera_filter}");
         assert!(
             complete_filter
-                .find("[wallpaper][card]")
+                .find("[background][card]")
                 .expect("scene merge")
                 < complete_filter.find("crop@camera").expect("scene camera")
         );
@@ -2450,24 +2483,28 @@ mod tests {
         );
         assert_eq!(
             assets
-                .wallpaper_path
-                .extension()
-                .and_then(|value| value.to_str()),
-            Some("png")
-        );
-        assert_eq!(
-            assets
-                .shadow_path
+                .background_path
                 .extension()
                 .and_then(|value| value.to_str()),
             Some("png")
         );
         assert!(assets.mask_path.is_file());
-        assert!(assets.wallpaper_path.is_file());
-        assert!(assets.shadow_path.is_file());
+        assert!(assets.background_path.is_file());
+        // The wallpaper and the shadow are folded into the background here, so
+        // neither is left behind for the render to open.
+        let leftovers = std::fs::read_dir(std::env::temp_dir())
+            .expect("the temporary directory should be readable")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with("recordly-static-wallpaper")
+                    || name.starts_with("recordly-squircle-shadow")
+            })
+            .count();
+        assert_eq!(leftovers, 0, "the folded layers should not survive");
         let _ = std::fs::remove_file(assets.mask_path);
-        let _ = std::fs::remove_file(assets.wallpaper_path);
-        let _ = std::fs::remove_file(assets.shadow_path);
+        let _ = std::fs::remove_file(assets.background_path);
     }
 
     #[test]
@@ -2476,15 +2513,22 @@ mod tests {
             (BackgroundStyle::PureBlack, 0_u8),
             (BackgroundStyle::PureWhite, 255_u8),
         ] {
-            let assets = recordly_frame_assets(style, None, 32, 18)
-                .expect("solid frame assets should be created");
+            // Straight off the rasterizer, before the shadow is folded in: the
+            // background carries the shadow now, so the flat colour can only be
+            // read here.
+            let color = style
+                .solid_color()
+                .expect("this style should rasterize as a solid colour");
+            let wallpaper_path = temporary_file("recordly-solid-wallpaper-test", "png");
+            rasterize_solid_wallpaper(color, &wallpaper_path, 32, 18)
+                .expect("solid wallpaper should be created");
             let decoded = Command::new("ffmpeg")
                 .args([
                     "-hide_banner",
                     "-loglevel",
                     "error",
                     "-i",
-                    assets.wallpaper_path.to_string_lossy().as_ref(),
+                    wallpaper_path.to_string_lossy().as_ref(),
                     "-frames:v",
                     "1",
                     "-f",
@@ -2498,9 +2542,7 @@ mod tests {
             assert!(decoded.status.success());
             assert!(!decoded.stdout.is_empty());
             assert!(decoded.stdout.iter().all(|channel| *channel == expected));
-            let _ = std::fs::remove_file(assets.mask_path);
-            let _ = std::fs::remove_file(assets.wallpaper_path);
-            let _ = std::fs::remove_file(assets.shadow_path);
+            let _ = std::fs::remove_file(wallpaper_path);
         }
     }
 
@@ -2513,9 +2555,9 @@ mod tests {
             "0.000000-1.000000 [enter] crop@camera w 178, [enter] crop@camera h 100, [enter] crop@camera x 71, [enter] crop@camera y 40;\n",
         )
         .expect("camera command fixture should be written");
-        let mut filter = recordly_card_filter(320, 180, 1_000, 30, 2, 3);
+        let mut filter = recordly_card_filter(320, 180, 1_000, 30, 2);
         filter.push(';');
-        filter.push_str(&wallpaper_background_filter(1, "card", "scene"));
+        filter.push_str(&scene_background_filter(1, "card", "scene"));
         filter.push_str(";[scene]null[scene0];");
         filter.push_str(&camera_filter_chain(
             "scene0",
@@ -2542,10 +2584,6 @@ mod tests {
                 "lavfi",
                 "-i",
                 "color=c=white:size=294x166:rate=30",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=c=black@0.35:size=320x180:rate=30,format=rgba",
                 "-filter_complex",
                 &filter,
                 "-map",
