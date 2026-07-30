@@ -178,34 +178,6 @@ kbd {
   transform-origin: bottom right;
 }
 
-.frame.is-armed::before,
-.frame.is-armed::after,
-.frame.is-armed .frame-brackets::before,
-.frame.is-armed .frame-brackets::after {
-  border-color: rgb(63 115 241 / 0.55);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  /* The brackets close once on arrival, the way the capture border does. */
-  .js .frame.is-armed::before,
-  .js .frame.is-armed::after,
-  .js .frame.is-armed .frame-brackets::before,
-  .js .frame.is-armed .frame-brackets::after {
-    animation: arm 720ms var(--ease) 240ms both;
-  }
-}
-
-@keyframes arm {
-  from {
-    opacity: 0;
-    transform: scale(1.7);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
 /* Media, and the slots standing in until the captures exist. */
 .media img,
 .media video {
@@ -288,18 +260,11 @@ kbd {
   transform: translateY(0) scale(0.985);
 }
 
-/* Hero */
+/* Hero: text only, so it takes its own height rather than the viewport's.
+   The headline and lede stay well short of the shell's width, which leaves
+   deliberate open space to the right rather than centering the block. */
 .hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
-  align-items: center;
-  gap: clamp(36px, 5vw, 64px);
-  min-height: min(100dvh, 720px);
-  padding-block: clamp(56px, 9vh, 96px);
-  /* Copy lines up with every other section, the capture runs past the shell
-     and out toward the edge. */
-  padding-left: max(var(--gutter), calc((100% - 1180px) / 2 + var(--gutter)));
-  padding-right: max(var(--gutter), calc((100% - 1740px) / 2));
+  padding-block: clamp(64px, 10vh, 96px) clamp(48px, 6vw, 80px);
 }
 
 .hero-brand {
@@ -593,14 +558,6 @@ footer {
 }
 
 @media (max-width: 960px) {
-  .hero {
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-    min-height: auto;
-    padding-block: clamp(48px, 8vh, 80px) 32px;
-    padding-inline: var(--gutter);
-  }
-
   .hero h1 {
     max-width: 18ch;
   }
