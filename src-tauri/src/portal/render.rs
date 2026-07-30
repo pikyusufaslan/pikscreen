@@ -258,7 +258,9 @@ pub(super) fn render_final_video(
         scene_label = next_scene_label;
     }
     if events.is_empty() {
-        filter.push_str(&format!(";[{scene_label}]null[screen]"));
+        // Both branches hand the same pixel format downstream, so a recording
+        // with no zoom does not negotiate differently from one with zooms.
+        filter.push_str(&format!(";[{scene_label}]format=gbrp[screen]"));
     } else {
         filter.push(';');
         filter.push_str(&camera_filter_chain(
@@ -584,8 +586,14 @@ pub(super) fn camera_filter_chain(
     width: u32,
     height: u32,
 ) -> String {
+    // The overlays upstream need an alpha channel, this does not, and packed
+    // RGBA is the wrong shape to scale: swscale unpacks to planes before it
+    // resamples, so leaving the frame packed pays for that twice. Going planar
+    // first is bit for bit the same picture. Measured at 1880x982 over 14 s of
+    // 120 FPS, whole render: 43.0 s packed against 31.6 s planar, PSNR between
+    // the two outputs infinite.
     format!(
-        "[{input_label}]sendcmd=f={},crop@camera=w={width}:h={height}:x=0:y=0:exact=1,scale={width}:{height}:flags=lanczos,format=rgba[{output_label}]",
+        "[{input_label}]sendcmd=f={},format=gbrp,crop@camera=w={width}:h={height}:x=0:y=0:exact=1,scale={width}:{height}:flags=lanczos[{output_label}]",
         commands_path.display()
     )
 }
@@ -1986,7 +1994,11 @@ mod tests {
         let scale = filter.find("scale=1920:1080").expect("camera scale");
         assert!(scene <= sendcmd && sendcmd < crop && crop < scale);
         assert!(!filter.contains("pad="));
-        assert!(filter.ends_with("format=rgba[screen]"));
+        // Planar before the resample, and nothing repacks it afterwards.
+        let planar = filter.find("format=gbrp").expect("planar before the camera");
+        assert!(planar < crop);
+        assert!(!filter.contains("format=rgba"));
+        assert!(filter.ends_with("scale=1920:1080:flags=lanczos[screen]"));
     }
 
     #[test]
